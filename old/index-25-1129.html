@@ -1,0 +1,264 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>p5.js DCT Visualizer</title>
+    <style>
+        body { 
+            font-family: sans-serif; 
+            background-color: #f0f0f0; 
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+        }
+        #canvas-container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .canvas-wrapper {
+            border: 1px solid #ccc;
+            padding: 10px;
+            background-color: white;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        h1, h2 {
+            text-align: center;
+            margin: 0;
+            padding: 5px;
+        }
+        #error-log {
+            color: red;
+            margin-top: 15px;
+            font-family: monospace;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.min.js"></script>
+    <script>
+// p5.js sketch for DCT visualization
+
+const CANVAS_W = 256;
+const CANVAS_H = 256;
+const BLOCK_SIZE = 8;
+
+// --- DCT/IDCT Math Library ---
+// This is a direct JS port of the DCT-II formula for 1D arrays.
+function dct1d(data) {
+    const N = data.length;
+    const coeffs = new Float32Array(N);
+    const pi_div_2N = Math.PI / (2 * N);
+
+    for (let k = 0; k < N; k++) {
+        let sum = 0;
+        for (let n = 0; n < N; n++) {
+            sum += data[n] * Math.cos((2 * n + 1) * k * pi_div_2N);
+        }
+        // Using orthonormal scaling
+        const alpha = (k === 0) ? Math.sqrt(1 / N) : Math.sqrt(2 / N);
+        coeffs[k] = alpha * sum;
+    }
+    return coeffs;
+}
+
+// Direct JS port of the IDCT formula (which is the same as DCT-II for orthonormal version)
+function idct1d(coeffs) {
+    const N = coeffs.length;
+    const data = new Float32Array(N);
+    const pi_div_2N = Math.PI / (2 * N);
+
+    for (let n = 0; n < N; n++) {
+        let sum = 0;
+        for (let k = 0; k < N; k++) {
+            const alpha = (k === 0) ? Math.sqrt(1 / N) : Math.sqrt(2 / N);
+            sum += alpha * coeffs[k] * Math.cos((2 * n + 1) * k * pi_div_2N);
+        }
+        data[n] = sum;
+    }
+    return data;
+}
+
+// Applies 1D DCT to rows, then columns
+function dct2d(matrix) {
+    const N = matrix.length;
+    const tempMatrix = Array(N).fill(0).map(() => new Float32Array(N));
+    const finalMatrix = Array(N).fill(0).map(() => new Float32Array(N));
+
+    // Rows
+    for (let i = 0; i < N; i++) {
+        tempMatrix[i] = dct1d(matrix[i]);
+    }
+    // Columns
+    for (let j = 0; j < N; j++) {
+        const col = tempMatrix.map(row => row[j]);
+        const transformedCol = dct1d(col);
+        for (let i = 0; i < N; i++) {
+            finalMatrix[i][j] = transformedCol[i];
+        }
+    }
+    return finalMatrix;
+}
+
+// Applies 1D IDCT to rows, then columns
+function idct2d(matrix) {
+    const N = matrix.length;
+    const tempMatrix = Array(N).fill(0).map(() => new Float32Array(N));
+    const finalMatrix = Array(N).fill(0).map(() => new Float32Array(N));
+
+    // Rows
+    for (let i = 0; i < N; i++) {
+        tempMatrix[i] = idct1d(matrix[i]);
+    }
+    // Columns
+    for (let j = 0; j < N; j++) {
+        const col = tempMatrix.map(row => row[j]);
+        const transformedCol = idct1d(col);
+        for (let i = 0; i < N; i++) {
+            finalMatrix[i][j] = transformedCol[i];
+        }
+    }
+    return finalMatrix;
+}
+
+
+// --- Main p5.js Sketches ---
+
+// Sketch 1: Input Video
+const inputSketch = (p) => {
+    let video;
+    p.setup = () => {
+        p.createCanvas(CANVAS_W, CANVAS_H);
+        video = p.createCapture(p.VIDEO, (stream) => {
+            // Webcam capture is ready
+        });
+        video.size(CANVAS_W, CANVAS_H);
+        video.hide();
+        window.sourceVideo = video; // Make video globally accessible to other sketches
+    };
+
+    p.draw = () => {
+        if (window.sourceVideo && window.sourceVideo.elt.readyState === 4) {
+             // Draw the webcam video to the first canvas
+            p.image(window.sourceVideo, 0, 0, CANVAS_W, CANVAS_H);
+        }
+    };
+};
+
+// Sketch for managing the DCT and Output canvases
+const processingSketch = (p) => {
+    let dctCanvas;
+    let outputCanvas;
+    
+    p.setup = () => {
+        // This sketch does not create its own main canvas.
+        p.noCanvas(); 
+        
+        // It creates and manages graphics objects that are placed in specific divs.
+        dctCanvas = p.createGraphics(CANVAS_W, CANVAS_H);
+        outputCanvas = p.createGraphics(CANVAS_W, CANVAS_H);
+        
+        document.getElementById('p5-dct').append(dctCanvas.elt);
+        document.getElementById('p5-output').append(outputCanvas.elt);
+
+        dctCanvas.background(128);
+        outputCanvas.background(128);
+    };
+
+    p.draw = () => {
+        if (!window.sourceVideo || !window.sourceVideo.elt.readyState === 4) {
+            return; // Wait for video to be fully ready
+        }
+        
+        // Create a static image from the current video frame to process it
+        const source = p.createImage(CANVAS_W, CANVAS_H);
+        source.copy(window.sourceVideo, 0, 0, CANVAS_W, CANVAS_H, 0, 0, CANVAS_W, CANVAS_H);
+        source.loadPixels();
+        
+        // Load pixel arrays for our destination graphics
+        dctCanvas.loadPixels();
+        outputCanvas.loadPixels();
+
+        for (let y = 0; y < CANVAS_H; y += BLOCK_SIZE) {
+            for (let x = 0; x < CANVAS_W; x += BLOCK_SIZE) {
+                
+                // 1. Extract a block and convert to grayscale
+                const block = Array(BLOCK_SIZE).fill(0).map(() => new Float32Array(BLOCK_SIZE));
+                for (let j = 0; j < BLOCK_SIZE; j++) {
+                    for (let i = 0; i < BLOCK_SIZE; i++) {
+                        const idx = ((y + j) * CANVAS_W + (x + i)) * 4;
+                        const r = source.pixels[idx];
+                        const g = source.pixels[idx + 1];
+                        const b = source.pixels[idx + 2];
+                        // Center the pixel values around 0 for DCT
+                        block[j][i] = (0.299 * r + 0.587 * g + 0.114 * b) - 128;
+                    }
+                }
+                
+                // 2. Forward DCT
+                const coeffs = dct2d(block);
+                
+                // 3. Inverse DCT
+                const reconstructed = idct2d(coeffs);
+                
+                // 4. Fill in the pixels for the DCT and Output canvases
+                for (let j = 0; j < BLOCK_SIZE; j++) {
+                    for (let i = 0; i < BLOCK_SIZE; i++) {
+                        // Log-scaled visualization for DCT coefficient magnitudes
+                        const dctVal = p.log(p.abs(coeffs[j][i]) + 1) * 20; 
+                        const reconVal = reconstructed[j][i] + 128; // Shift back to 0-255 range
+
+                        const canvasIdx = ((y + j) * CANVAS_W + (x + i)) * 4;
+                        // DCT canvas (grayscale)
+                        dctCanvas.pixels[canvasIdx] = dctVal;
+                        dctCanvas.pixels[canvasIdx + 1] = dctVal;
+                        dctCanvas.pixels[canvasIdx + 2] = dctVal;
+                        dctCanvas.pixels[canvasIdx + 3] = 255;
+                        
+                        // Output canvas (grayscale)
+                        outputCanvas.pixels[canvasIdx] = reconVal;
+                        outputCanvas.pixels[canvasIdx + 1] = reconVal;
+                        outputCanvas.pixels[canvasIdx + 2] = reconVal;
+                        outputCanvas.pixels[canvasIdx + 3] = 255;
+                    }
+                }
+            }
+        }
+        
+        // Update the canvases with the new pixel data
+        dctCanvas.updatePixels();
+        outputCanvas.updatePixels();
+    };
+};
+
+// Start both p5 sketches when the window loads
+window.onload = () => {
+    new p5(inputSketch, 'p5-input');
+    new p5(processingSketch); // This sketch manages the other two canvases
+};
+</script>
+</head>
+<body>
+    <h1>Live DCT Signal Chain Visualizer</h1>
+    <div id="canvas-container">
+        <div class="canvas-wrapper">
+            <h2>1. Input (Webcam)</h2>
+            <div id="p5-input"></div>
+        </div>
+        <div class="canvas-wrapper">
+            <h2>2. DCT Coefficients</h2>
+            <div id="p5-dct"></div>
+        </div>
+        <div class="canvas-wrapper">
+            <h2>3. Reconstructed Output (IDCT)</h2>
+            <div id="p5-output"></div>
+        </div>
+    </div>
+    <div id="error-log"></div>
+</body>
+</html>

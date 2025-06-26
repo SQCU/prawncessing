@@ -1,0 +1,270 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Professional DCT Compression Visualizer</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f0f0f0; color: #333; display: flex; flex-direction: column; align-items: center; margin: 0; padding: 20px; }
+        h1 { margin-bottom: 20px; }
+        #controls { background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: flex; flex-wrap: wrap; gap: 20px; margin-bottom: 20px; align-items: center; justify-content: center; }
+        .control-group { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+        #perf-log { font-family: monospace; background-color: #222; color: #0f0; padding: 15px; border-radius: 5px; margin-bottom: 20px; min-width: 600px; text-align: left; white-space: pre; }
+        #main-canvas-container { border: 1px solid #ccc; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        label { font-weight: bold; }
+        select, input[type="range"] { width: 150px; }
+        .switch { position: relative; display: inline-block; width: 50px; height: 28px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 28px; }
+        .slider:before { position: absolute; content: ""; height: 20px; width: 20px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: #2196F3; }
+        input:checked + .slider:before { transform: translateX(22px); }
+    </style>
+    <script async src="https://docs.opencv.org/4.9.0/opencv.js" onload="onOpenCvReady();"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+</head>
+<body>
+    <h1>Professional DCT Compression Visualizer</h1>
+    <div id="controls">
+        <div class="control-group"><label>DCT Backend</label><div id="dct-backend-control"></div></div>
+        <div class="control-group"><label>Scheduler (REF)</label><div id="scheduler-control"></div></div>
+        <div class="control-group"><label>Block Size</label><div id="block-size-control"></div></div>
+        <div class="control-group"><label>Resolution</label><div id="resolution-control"></div></div>
+        <div class="control-group"><label>Search (k)</label><div id="k-control"></div></div>
+        <div class="control-group"><label>Interpolation (n)</label><div id="n-control"></div></div>
+        <div class="control-group"><label>In-Depth View</label><label class="switch"><input type="checkbox" id="view-toggle"><span class="slider"></span></label></div>
+    </div>
+    <div id="perf-log">Loading OpenCV...</div>
+    <div id="main-canvas-container"></div>
+
+<script>
+// --- DCT/IDCT Math Libraries (Main thread copy) ---
+const js_dct1d=(data)=>{const N=data.length,c=new Float32Array(N),t=Math.PI/(2*N);for(let o=0;o<N;o++){let r=0;for(let c=0;c<N;c++)r+=data[c]*Math.cos((2*c+1)*o*t);c[o]=(0===o?Math.sqrt(1/N):Math.sqrt(2/N))*r}return c};
+const js_idct1d=(data)=>{const N=data.length,c=new Float32Array(N),t=Math.PI/(2*N);for(let o=0;o<N;o++){let r=0;for(let c=0;c<N;c++){r+=(0===c?Math.sqrt(1/N):Math.sqrt(2/N))*data[c]*Math.cos((2*o+1)*c*t)}c[o]=r}return c};
+const js_dct2d=(data)=>{const N=data.length,t=Array(N).fill(0).map(()=>new Float32Array(N)),c=Array(N).fill(0).map(()=>new Float32Array(N));for(let o=0;o<N;o++)t[o]=js_dct1d(data[o]);for(let o=0;o<N;o++){const r=t.map(data=>data[o]),d=js_dct1d(r);for(let t=0;t<N;t++)c[t][o]=d[t]}return c.map(row => new Float32Array(row))};
+const js_idct2d=(data)=>{const N=data.length,t=Array(N).fill(0).map(()=>new Float32Array(N)),c=Array(N).fill(0).map(()=>new Float32Array(N));for(let o=0;o<N;o++)t[o]=js_idct1d(data[o]);for(let o=0;o<N;o++){const r=t.map(data=>data[o]),d=js_idct1d(r);for(let t=0;t<N;t++)c[t][o]=d[t]}return c.map(row => new Float32Array(row))};
+
+function cvDct2d(data) {
+    const N = data.length;
+    let src = cv.matFromArray(N, N, cv.CV_32F, [].concat.apply([], data));
+    let dst = new cv.Mat();
+    cv.dct(src, dst);
+    const result = Array.from({ length: N }, (_, j) => new Float32Array(N));
+    for (let j=0; j<N; j++) { for (let i=0; i<N; i++) { result[j][i] = dst.floatAt(j,i); } }
+    src.delete(); dst.delete();
+    return result;
+}
+
+function cvIdct2d(data) {
+    const N = data.length;
+    let src = cv.matFromArray(N, N, cv.CV_32F, [].concat.apply([], data));
+    let dst = new cv.Mat();
+    cv.idct(src, dst);
+    const result = Array.from({ length: N }, (_, j) => new Float32Array(N));
+    for (let j=0; j<N; j++) { for (let i=0; i<N; i++) { result[j][i] = dst.floatAt(j,i); } }
+    src.delete(); dst.delete();
+    return result;
+}
+
+const DCT_Backends = {
+    'js': { 'dct': js_dct2d, 'idct': js_idct2d, available: true },
+    'opencv': { 'dct': cvDct2d, 'idct': cvIdct2d, available: false }
+};
+
+const PANEL_SIZE = 256;
+const GAP = 20;
+const NUM_WORKERS = navigator.hardwareConcurrency || 4;
+let workers = [];
+
+let appState = { video: null, staticRefImage: null, manualKeyframe: null, buffers: { preprocessed: null, ref: null, diff: null, output: null, }, needsRefRecompute: true, refCoeffsGrid: [], lastProcW: -1, lastProcH: -1, highlightRect: null, stats: "Initializing...", isComputing: false };
+let dctBackendSelector, blockSizeSlider, resolutionSlider, scheduler, kSlider, nSlider, viewToggle;
+
+function onOpenCvReady() {
+    cv['onRuntimeInitialized'] = () => {
+        console.log("OpenCV is ready.");
+        DCT_Backends.opencv.available = true;
+        dctBackendSelector.option('OpenCV');
+        document.getElementById('perf-log').innerHTML = "Ready.";
+    };
+}
+
+function extractRGBBlock(sourceBuffer, x, y, blockSize) {
+    const block = [ Array(blockSize).fill(0).map(() => new Float32Array(blockSize)), Array(blockSize).fill(0).map(() => new Float32Array(blockSize)), Array(blockSize).fill(0).map(() => new Float32Array(blockSize)) ];
+    for (let j=0; j<blockSize; j++) {
+        for (let i=0; i<blockSize; i++) {
+            const idx = ((y+j)*sourceBuffer.width+(x+i))*4;
+            block[0][j][i] = sourceBuffer.pixels[idx] - 128; block[1][j][i] = sourceBuffer.pixels[idx+1] - 128; block[2][j][i] = sourceBuffer.pixels[idx+2] - 128;
+        }
+    }
+    return block;
+}
+
+function setup() {
+    createCanvas(PANEL_SIZE * 4 + GAP * 3, PANEL_SIZE + 40).parent('main-canvas-container');
+    
+    console.log(`Initializing ${NUM_WORKERS} workers...`);
+    for (let i = 0; i < NUM_WORKERS; i++) workers.push(new Worker('worker.js'));
+    
+    dctBackendSelector = createSelect().parent('dct-backend-control').changed(() => { appState.needsRefRecompute = true; });
+    dctBackendSelector.option('Naive JS');
+    
+    scheduler = createSelect().parent('scheduler-control').changed(() => { appState.needsRefRecompute = true; });
+    scheduler.option('Previous Frame'); scheduler.option('Static Image'); scheduler.option('Manual Keyframe');
+    blockSizeSlider = createSlider(4, 32, 8, 4).parent('block-size-control').changed(() => { appState.needsRefRecompute = true; });
+    resolutionSlider = createSlider(0.25, 1.0, 1.0, 0.05).parent('resolution-control');
+    kSlider = createSlider(1, 16, 1, 1).parent('k-control');
+    nSlider = createSlider(0, 1, 0, 0.01).parent('n-control');
+    viewToggle = select('#view-toggle').changed(updateLayout);
+    
+    appState.video = createCapture(VIDEO, () => console.log("Webcam ready."));
+    appState.video.size(PANEL_SIZE, PANEL_SIZE);
+    appState.video.hide();
+    appState.staticRefImage = createGraphics(PANEL_SIZE, PANEL_SIZE); appState.staticRefImage.background(128);
+    appState.manualKeyframe = createGraphics(PANEL_SIZE, PANEL_SIZE); appState.manualKeyframe.background(128);
+    
+    updateLayout();
+    runComputationLoop();
+}
+
+function updateLayout() { const isIndepth = viewToggle.checked(); const panelCount = isIndepth ? 5:4; resizeCanvas(PANEL_SIZE*panelCount+GAP*(panelCount-1), PANEL_SIZE+40); }
+function keyPressed() { if (key.toLowerCase()==='c') { appState.manualKeyframe.image(appState.video, 0, 0, PANEL_SIZE, PANEL_SIZE); scheduler.selected('Manual Keyframe'); appState.needsRefRecompute = true; console.log("Keyframe captured."); } }
+
+async function runComputationLoop() {
+    while (true) {
+        if (!appState.video || appState.video.width === 0 || appState.isComputing) {
+            await new Promise(resolve => setTimeout(resolve, 10));
+            continue;
+        }
+        appState.isComputing = true;
+        
+        const frameStartTime = performance.now();
+        const currentBlockSize = blockSizeSlider.value();
+        const currentScale = resolutionSlider.value();
+        const procW = floor(PANEL_SIZE * currentScale);
+        const procH = floor(PANEL_SIZE * currentScale);
+
+        if (procW !== appState.lastProcW || procH !== appState.lastProcH) {
+            appState.buffers.preprocessed = createGraphics(procW, procH);
+            appState.buffers.ref = createGraphics(procW, procH);
+            appState.buffers.diff = createGraphics(procW, procH);
+            appState.buffers.output = createGraphics(procW, procH);
+            appState.lastProcW = procW; appState.lastProcH = procH;
+            appState.needsRefRecompute = true;
+        }
+
+        appState.buffers.preprocessed.image(appState.video, 0, 0, procW, procH);
+        
+        const schedulerMode = scheduler.value();
+        const backendKey = dctBackendSelector.value() === 'OpenCV' ? 'opencv' : 'js';
+        if (schedulerMode === 'Previous Frame') appState.needsRefRecompute = true;
+        
+        let currentRefSource = appState.staticRefImage;
+        if(schedulerMode === 'Previous Frame' && appState.buffers.output.width > 0) currentRefSource = appState.buffers.output;
+        else if (schedulerMode === 'Manual Keyframe') currentRefSource = appState.manualKeyframe;
+        appState.buffers.ref.image(currentRefSource, 0, 0, procW, procH);
+        
+        let refComputeTime = 0;
+        if (appState.needsRefRecompute && DCT_Backends[backendKey].available) {
+            const refStartTime = performance.now();
+            const dct2d = DCT_Backends[backendKey].dct;
+            const computeRGBDCT = (rgbBlock) => [dct2d(rgbBlock[0]), dct2d(rgbBlock[1]), dct2d(rgbBlock[2])];
+
+            const ref = appState.buffers.ref;
+            ref.loadPixels();
+            const gridW = floor(ref.width / currentBlockSize);
+            const gridH = floor(ref.height / currentBlockSize);
+            appState.refCoeffsGrid = [];
+            for(let gy=0;gy<gridH;gy++){
+                for(let gx=0;gx<gridW;gx++){
+                    const block = extractRGBBlock(ref, gx*currentBlockSize, gy*currentBlockSize, currentBlockSize);
+                    const coeffs = computeRGBDCT(block);
+                    appState.refCoeffsGrid.push({pos: {x:gx,y:gy}, coeffs: coeffs});
+                }
+            }
+            appState.needsRefRecompute = false;
+            refComputeTime = performance.now() - refStartTime;
+        }
+        
+        const searchStart = performance.now();
+        appState.buffers.preprocessed.loadPixels();
+        const inputPixels = appState.buffers.preprocessed.pixels;
+        const totalRows = procH;
+        const rowsPerWorker = Math.ceil(totalRows / NUM_WORKERS);
+        
+        const promises = workers.map((worker, i) => new Promise(resolve => {
+            const startRow = i * rowsPerWorker;
+            if (startRow >= totalRows) return resolve(null);
+            const endRow = Math.min(startRow + rowsPerWorker, totalRows);
+            const sliceHeight = endRow - startRow;
+            const sliceData = inputPixels.slice(startRow * procW * 4, endRow * procW * 4);
+            
+            worker.onmessage = e => resolve(e.data);
+            worker.postMessage({
+                operation: 'process_slice',
+                procW, procH: sliceHeight, blockSize: currentBlockSize, kValue: kSlider.value(), nValue: nSlider.value(),
+                inputSlice: { data: sliceData, width: procW, height: sliceHeight },
+                refCoeffsGrid: appState.refCoeffsGrid,
+                dctBackend: backendKey
+            });
+        }));
+
+        const workerResults = await Promise.all(promises);
+        const searchTime = performance.now() - searchStart;
+
+        appState.buffers.output.loadPixels();
+        appState.buffers.diff.loadPixels();
+        workerResults.forEach((result, i) => {
+            if (result && result.outputPixels) {
+                const startRow = i * rowsPerWorker;
+                appState.buffers.output.pixels.set(result.outputPixels, startRow * procW * 4);
+                appState.buffers.diff.pixels.set(result.diffPixels, startRow * procW * 4);
+            }
+        });
+        appState.buffers.output.updatePixels();
+        appState.buffers.diff.updatePixels();
+        
+        const totalTime = performance.now() - frameStartTime;
+        appState.stats = `Backend: ${backendKey.toUpperCase()} | Frame: ${totalTime.toFixed(1)}ms | Ref Comp: ${refComputeTime.toFixed(1)}ms | Search: ${searchTime.toFixed(1)}ms | Res: ${procW}x${procH}`;
+        appState.isComputing = false;
+    }
+}
+
+function draw() {
+    document.getElementById('perf-log').innerHTML = appState.stats;
+    
+    let baseOffset = viewToggle.checked() ? PANEL_SIZE + GAP : 0;
+    if (mouseIsPressed && mouseX > baseOffset && mouseX < baseOffset + PANEL_SIZE && mouseY < PANEL_SIZE) {
+        const procW = appState.lastProcW; const procH = appState.lastProcH; const currentBlockSize = blockSizeSlider.value();
+        if (procW > 0 && procH > 0) {
+            appState.highlightRect = { x: floor((mouseX - baseOffset) / (currentBlockSize * (PANEL_SIZE/procW))) * currentBlockSize, y: floor(mouseY / (currentBlockSize * (PANEL_SIZE/procH))) * currentBlockSize, w: currentBlockSize, h: currentBlockSize };
+        }
+    } else { appState.highlightRect = null; }
+
+    background('#f0f0f0');
+    let xOffset = 0;
+    const drawPanel = (label, buffer, highlight) => {
+        if (buffer) {
+            image(buffer, xOffset, 0, PANEL_SIZE, PANEL_SIZE);
+            if(highlight && appState.lastProcW > 0){ noFill(); stroke(255,255,0); strokeWeight(2); const procW=appState.lastProcW; const procH=appState.lastProcH; rect(xOffset+highlight.x*(PANEL_SIZE/procW), highlight.y*(PANEL_SIZE/procH), highlight.w*(PANEL_SIZE/procW), highlight.h*(PANEL_SIZE/procH)); }
+            fill(51); noStroke(); textAlign(CENTER); text(label, xOffset + PANEL_SIZE / 2, PANEL_SIZE + 20);
+            xOffset += PANEL_SIZE + GAP;
+        }
+    };
+    
+    if (viewToggle.checked()) {
+        drawPanel('Raw Input', appState.video);
+        drawPanel('Input (IMG)', appState.buffers.preprocessed, appState.highlightRect);
+        drawPanel('Reference (REF)', appState.buffers.ref);
+        drawPanel('Search Similarity', appState.buffers.diff);
+        drawPanel('Summer Output', appState.buffers.output);
+    } else {
+        drawPanel('Input (IMG)', appState.buffers.preprocessed, appState.highlightRect);
+        drawPanel('Reference (REF)', appState.buffers.ref);
+        drawPanel('Search Similarity', appState.buffers.diff);
+        drawPanel('Summer Output', appState.buffers.output);
+    }
+}
+</script>
+</body>
+</html>

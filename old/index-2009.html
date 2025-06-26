@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Professional DCT Compression Visualizer</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f0f0f0; color: #333; display: flex; flex-direction: column; align-items: center; margin: 0; padding: 20px; }
+        h1 { margin-bottom: 20px; }
+        #controls { background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: flex; flex-wrap: wrap; gap: 15px 25px; margin-bottom: 20px; align-items: center; justify-content: center; }
+        .control-group { display: flex; flex-direction: column; align-items: center; }
+        label { font-weight: bold; margin-bottom: 5px; }
+        select, input[type="range"] { width: 120px; }
+        #pipeline-container { display: flex; flex-wrap: nowrap; gap: 15px; width: 100%; justify-content: center; align-items: flex-start; overflow-x: auto; padding-bottom: 15px; }
+        .module-container { border: 1px solid #ddd; border-radius: 8px; background: #fff; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); display: flex; flex-direction: column; gap: 10px; min-width: 256px;}
+        .module-header { display: flex; justify-content: space-between; align-items: center; font-weight: bold; }
+        .log-card { font-family: monospace; background-color: #222; color: #0f0; padding: 10px; border-radius: 5px; text-align: left; white-space: pre; min-height: 40px; }
+        .global-log-card { background-color: #1a0a2b; color: #f0f; }
+        .canvas-wrapper canvas { max-width: 100%; height: auto; display: block; border: 1px solid #eee; }
+    </style>
+    <script src="dct.js"></script>
+    <script src="kdtree.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+</head>
+<body>
+    <h1>Professional DCT Compression Visualizer</h1>
+    <div id="controls"></div>
+    <div id="pipeline-container"></div>
+
+<script>
+const PANEL_SIZE = 256;
+const NUM_WORKERS = navigator.hardwareConcurrency || 4;
+let workers = [];
+let readyWorkers = 0;
+let uiControls = {};
+
+let appState = { 
+    video: null, staticRefImage: null, manualKeyframe: null, tracerImage: null,
+    canvases: {}, 
+    needsRefRecompute: true, refCoeffsGrid: [], kdTree: null,
+    lastProcW: -1, lastProcH: -1, isComputing: false, lastFrameDecisions: [],
+    toggles: { inputs: true, ref: true, diff: true, postprocess: true, viz: true },
+    emaMin: -2.0, emaMax: 1.0, lastLoopEndTime: 0, lastLoopTotalTime: 0
+};
+
+/** Safely updates the innerHTML of a stats card, checking for existence first. */
+function updateStat(id, text) {
+    const el = document.getElementById(`stats-${id}`);
+    if (el) el.innerHTML = text;
+}
+
+/** Dynamically creates a control group and appends it to the controls container. */
+function createControlGroup(config) {
+    const container = createDiv().addClass('control-group').parent('controls');
+    createSpan(config.label).parent(container);
+    let control;
+    switch(config.type) {
+        case 'select':
+            control = createSelect().parent(container);
+            config.options.forEach(opt => control.option(opt));
+            break;
+        case 'slider':
+            control = createSlider(config.min, config.max, config.default, config.step).parent(container);
+            break;
+        case 'checkbox':
+            control = createCheckbox('', config.default).parent(container);
+            break;
+    }
+    uiControls[config.id] = control;
+}
+
+/** Dynamically creates a processing module (stats card + canvas) and appends it to the pipeline. */
+function createModule(config) {
+    const container = createDiv().addClass('module-container').parent('pipeline-container');
+    const header = createDiv().addClass('module-header').parent(container);
+    createSpan(config.title).parent(header);
+    if(config.toggleId) {
+        const toggle = createCheckbox('', true).parent(header);
+        toggle.changed(() => appState.toggles[config.toggleId] = toggle.checked());
+    }
+    createDiv('').id(`stats-${config.id}`).addClass('log-card' + (config.isGlobal ? ' global-log-card' : '')).parent(container);
+    if(config.hasCanvas) {
+        createDiv('').id(`panel-${config.id}`).addClass('canvas-wrapper').parent(container);
+    }
+}
+
+function createTracerImage(pg) {
+    pg.background(0); pg.noStroke();
+    const orange = color(255, 165, 0); const teal = color(0, 128, 128);
+    const segmentHeight = pg.height / 8;
+    for (let i = 0; i < 8; i++) {
+        pg.fill(i % 2 === 0 ? orange : teal);
+        pg.beginShape();
+        if (i % 2 === 0) {
+            pg.vertex(0, i * segmentHeight); pg.vertex(pg.width, i * segmentHeight);
+            pg.vertex(pg.width, (i + 0.5) * segmentHeight); pg.vertex(0, (i + 1) * segmentHeight);
+        } else {
+            pg.vertex(0, i * segmentHeight); pg.vertex(pg.width, (i + 0.5) * segmentHeight);
+            pg.vertex(pg.width, (i + 1) * segmentHeight); pg.vertex(0, (i + 1) * segmentHeight);
+        }
+        pg.endShape(CLOSE);
+    }
+}
+
+/** STAGE 1: Acquire and prepare input and reference sources. */
+function acquireInputs(frameData, state) {
+    const startTime = performance.now();
+    if (!state.toggles.inputs) { frameData.timers.inputs = 0; updateStat('inputs', 'Disabled'); return frameData; }
+    
+    const currentScale = uiControls.resolution.value();
+    const procW = floor(PANEL_SIZE * currentScale); const procH = floor(PANEL_SIZE * currentScale);
+    frameData.procW = procW; frameData.procH = procH;
+    
+    if (procW > 0 && (procW !== state.lastProcW || procH !== state.lastProcH)) {
+        // FIX: Loop over object keys and handle topTiles (now named 'viz') as a special case.
+        for(const key in state.canvases) {
+            if(state.canvases[key]) {
+                if(key === 'viz') {
+                    state.canvases[key].resize(PANEL_SIZE, PANEL_SIZE);
+                } else {
+                    state.canvases[key].resize(procW, procH);
+                }
+            }
+        }
+        state.lastProcW = procW; state.lastProcH = procH; state.needsRefRecompute = true;
+    }
+    if (!state.canvases.inputs) return frameData;
+
+    state.canvases.inputs.image(state.video, 0, 0, procW, procH);
+    
+    let source; const mode = uiControls.scheduler.value();
+    if(mode==='Previous Frame' && state.canvases.postprocess.width>0) source = state.canvases.postprocess;
+    else if(mode==='Manual Keyframe') source = state.manualKeyframe;
+    else if(mode==='Tracer') { createTracerImage(state.tracerImage); source = state.tracerImage; }
+    else source = state.staticRefImage;
+    if(mode!=='Static Image') state.needsRefRecompute = true;
+    state.canvases.ref.image(source, 0, 0, procW, procH);
+    
+    if (mode === 'Tracer' || uiControls.skewStrength.value() > 0) {
+        const shear = Math.sin(TWO_PI*(millis()/1000)/uiControls.oscPeriod.value())*uiControls.skewStrength.value();
+        let temp=createGraphics(procW,procH); temp.translate(procW/2,procH/2); temp.shearX(shear);
+        temp.image(state.canvases.ref,-procW/2,-procH/2,procW,procH); state.canvases.ref.image(temp,0,0); temp.remove();
+    }
+    frameData.timers.inputs = performance.now() - startTime;
+    updateStat('inputs', `Res: ${procW}x${procH}\nTime: ${frameData.timers.inputs.toFixed(1)}ms`);
+    return frameData;
+}
+
+/** STAGE 2: Compute Ref Coeffs and build the K-D Tree for ANN search. */
+function computeReferenceCoeffs(frameData, state) {
+    const startTime = performance.now();
+    if (!state.toggles.ref) { frameData.timers.coeffs = 0; updateStat('ref', 'Disabled'); return frameData; }
+    
+    let status = 'Cached';
+    if (state.needsRefRecompute && frameData.procW > 0) {
+        status = 'Recomputed';
+        const ref = state.canvases.ref; ref.loadPixels();
+        const bs = uiControls.blockSize.value();
+        state.refCoeffsGrid = []; const points = [];
+        const dim = bs * bs * 3;
+        const flattenCoeffs = (coeffs) => {
+            const flat = new Float32Array(dim); let k = 0;
+            for(let c=0;c<3;c++) for(let j=0;j<bs;j++) for(let i=0;i<bs;i++) flat[k++] = coeffs[c][j][i];
+            return flat;
+        };
+        
+        for(let gy=0; gy < floor(ref.height / bs); gy++) for(let gx=0; gx < floor(ref.width / bs); gx++) {
+            const block = [Array(bs).fill(0).map(()=>new Float32Array(bs)),Array(bs).fill(0).map(()=>new Float32Array(bs)),Array(bs).fill(0).map(()=>new Float32Array(bs))];
+            for(let j=0;j<bs;j++) for(let i=0;i<bs;i++){ const idx=((gy*bs+j)*ref.width+(gx*bs+i))*4; block[0][j][i]=ref.pixels[idx]-128; block[1][j][i]=ref.pixels[idx+1]-128; block[2][j][i]=ref.pixels[idx+2]-128;}
+            const coeffs = [dct2d(block[0]), dct2d(block[1]), dct2d(block[2])];
+            const point = { pos: {x:gx, y:gy}, flat: flattenCoeffs(coeffs) };
+            points.push(point);
+            state.refCoeffsGrid.push({pos: {x:gx,y:gy}, coeffs});
+        }
+        
+        const distance = (a, b) => { let d=0; for(let i=0;i<a.length;i++) d+=(a[i]-b[i])**2; return Math.sqrt(d); };
+        const dimensions = ['flat'];
+        state.kdTree = new kdTree(points, distance, dimensions);
+        
+        workers.forEach(w => w.postMessage({ operation: 'init_tree', kdTreeJSON: state.kdTree.toJSON(), refCoeffsGrid: state.refCoeffsGrid }));
+        state.needsRefRecompute = false;
+    }
+    
+    frameData.timers.coeffs = performance.now() - startTime;
+    updateStat('ref', `Status: ${status}\nTime: ${frameData.timers.coeffs.toFixed(1)}ms`);
+    return frameData;
+}
+
+/** STAGE 3: Run the parallel ANN search on web workers. */
+async function runParallelSearch(frameData, state) {
+    const startTime = performance.now();
+    if (!state.toggles.diff || !state.canvases.inputs) { frameData.timers.search = 0; frameData.workerResults = []; updateStat('diff', 'Disabled'); return frameData; }
+    
+    state.canvases.inputs.loadPixels();
+    const { procW, procH } = frameData;
+    const promises = workers.map((worker) => new Promise(resolve => {
+        const i = workers.indexOf(worker);
+        const rowsPerWorker = Math.ceil(procH / NUM_WORKERS);
+        const startRow = i * rowsPerWorker;
+        if (startRow >= procH) return resolve(null);
+        const endRow = Math.min(startRow + rowsPerWorker, procH);
+        const sliceHeight = endRow - startRow;
+        const sliceData = state.canvases.inputs.pixels.slice(startRow*procW*4, endRow*procW*4);
+        
+        const messageHandler = (e) => { worker.removeEventListener('message', messageHandler); resolve(e.data); };
+        worker.addEventListener('message', messageHandler);
+        
+        worker.postMessage({
+            operation: 'process_slice', procW, procH:sliceHeight, blockSize:uiControls.blockSize.value(), nValue:uiControls.interpolation.value(),
+            similarityThreshold:uiControls.similarityThresh.value(), startRow,
+            inputSlice:{data:sliceData,width:procW,height:sliceHeight}
+        });
+    }));
+    frameData.workerResults = await Promise.all(promises);
+    frameData.timers.search = performance.now() - startTime;
+    updateStat('diff', `Workers: ${NUM_WORKERS}\nTime: ${frameData.timers.search.toFixed(1)}ms`);
+    return frameData;
+}
+
+/** STAGE 4: Process and aggregate results from workers. */
+function processWorkerResults(frameData, state) {
+    const startTime = performance.now();
+    if (!state.toggles.postprocess || !frameData.workerResults || !state.canvases.postprocess) { frameData.timers.postprocess = 0; updateStat('postprocess', 'Disabled'); return frameData; }
+    
+    const allScores = frameData.workerResults.flatMap(r => r && r.frameStats ? r.frameStats.scores : []);
+    state.lastFrameDecisions = frameData.workerResults.flatMap(r => r ? r.decisionPlan : []);
+    
+    if (allScores.length > 0) {
+        const a=uiControls.emaAlpha.value();
+        state.emaMin=a*Math.min(...allScores)+(1-a)*state.emaMin;
+        state.emaMax=a*Math.max(...allScores)+(1-a)*state.emaMax;
+    }
+
+    state.canvases.postprocess.loadPixels();
+    frameData.workerResults.forEach((result, i) => {
+        if(result&&result.outputPixels){
+            const rowsPerWorker = Math.ceil(frameData.procH / NUM_WORKERS);
+            state.canvases.postprocess.pixels.set(result.outputPixels, (i*rowsPerWorker)*frameData.procW*4);
+        }
+    });
+    state.canvases.postprocess.updatePixels();
+    
+    frameData.timers.postprocess = performance.now() - startTime;
+    updateStat('postprocess', `EMA Min/Max: ${state.emaMin.toFixed(2)}/${state.emaMax.toFixed(2)}\nTime: ${frameData.timers.postprocess.toFixed(1)}ms`);
+    return frameData;
+}
+
+/** STAGE 5: Update all visualization canvases. */
+function updateVisualizations(frameData, state) {
+    const startTime = performance.now();
+    if (!state.toggles.viz) { frameData.timers.viz = 0; updateStat('viz', 'Disabled'); return frameData; }
+    
+    const bs=uiControls.blockSize.value();
+    const { diff, inputs, viz, ref } = state.canvases;
+    if(!diff || !inputs || !viz || !ref) return frameData;
+
+    diff.background(0);
+    state.lastFrameDecisions.forEach(d => {
+        const block=inputs.get(d.gx*bs,d.gy*bs,bs,bs);
+        diff.push();
+        if(d.blockDecision==='interpolate') diff.tint(255,127); else diff.filter(INVERT);
+        diff.image(block,d.gx*bs,d.gy*bs,bs,bs);
+        diff.pop();
+    });
+
+    const counts={};
+    state.lastFrameDecisions.forEach(d=>{if(d.blockDecision==='interpolate' && d.refPos){const k=`${d.refPos.x},${d.refPos.y}`;counts[k]=(counts[k]||0)+1;}});
+    const sorted=Object.entries(counts).sort((a,b)=>b[1]-a[1]);
+    viz.background(50);
+    for(let i=0;i<Math.min(uiControls.topKTiles.value(),sorted.length);i++){
+        const[k]=sorted[i];const[rx,ry]=k.split(',').map(Number);
+        const tile=ref.get(rx*bs,ry*bs,bs,bs);
+        viz.image(tile,(i%4)*(PANEL_SIZE/4),floor(i/4)*(PANEL_SIZE/4),PANEL_SIZE/4,PANEL_SIZE/4);
+    }
+    frameData.timers.viz = performance.now() - startTime;
+    updateStat('viz', `Decisions: ${state.lastFrameDecisions.length}\nTime: ${frameData.timers.viz.toFixed(1)}ms`);
+    return frameData;
+}
+
+/** Main Orchestration Loop */
+async function runComputationLoop() {
+    while (true) {
+        const loopStartTime = performance.now();
+        if (!appState.video || appState.video.width === 0 || appState.isComputing) {
+            await new Promise(resolve => setTimeout(resolve, 10)); continue;
+        }
+        appState.isComputing = true;
+        let frameData = { timers: {} };
+        
+        try {
+            frameData = acquireInputs(frameData, appState);
+            frameData = computeReferenceCoeffs(frameData, appState);
+            frameData = await runParallelSearch(frameData, appState);
+            frameData = processWorkerResults(frameData, appState);
+            updateVisualizations(frameData, appState);
+        } finally {
+            const loopEndTime = performance.now();
+            const totalLoopTime = loopEndTime - loopStartTime;
+            const sumOfStages = Object.values(frameData.timers).reduce((a, b) => a + b, 0);
+            const intraLoopGap = totalLoopTime - sumOfStages;
+            const crossLoopGap = appState.lastLoopEndTime > 0 ? loopStartTime - appState.lastLoopEndTime : 0;
+            const intraWarn = intraLoopGap > totalLoopTime*0.01 ? '⚠️' : '';
+            const crossWarn = crossLoopGap > appState.lastLoopTotalTime*0.01 && appState.lastLoopTotalTime > 0 ? '⚠️' : '';
+            
+            updateStat('global', `Total: ${totalLoopTime.toFixed(1)}ms\n` +
+                `Intra-Gap: ${intraLoopGap.toFixed(1)}ms ${intraWarn}\nCross-Gap: ${crossLoopGap.toFixed(1)}ms ${crossWarn}`);
+
+            appState.lastLoopEndTime = loopEndTime; appState.lastLoopTotalTime = totalLoopTime;
+            appState.isComputing = false;
+        }
+    }
+}
+
+function setup() {
+    noCanvas();
+    
+    // --- Define UI Configuration ---
+    const controlsConfig = [
+        {id: 'scheduler', label: 'Scheduler (REF)', type: 'select', options: ['Previous Frame', 'Static Image', 'Manual Keyframe', 'Tracer']},
+        {id: 'blockSize', label: 'Block Size', type: 'slider', min: 4, max: 32, default: 8, step: 4},
+        {id: 'resolution', label: 'Resolution', type: 'slider', min: 0.25, max: 1.0, default: 0.5, step: 0.05},
+        {id: 'interpolation', label: 'Interpolation (n)', type: 'slider', min: 0, max: 1, default: 0.5, step: 0.01},
+        {id: 'similarityThresh', label: 'Similarity Thresh', type: 'slider', min: -3, max: 1.5, default: -1.0, step: 0.1},
+        {id: 'adaptiveRange', label: 'Adaptive Range', type: 'checkbox', default: false},
+        {id: 'emaAlpha', label: 'EMA Alpha', type: 'slider', min: 0.01, max: 0.5, default: 0.1, step: 0.01},
+        {id: 'oscPeriod', label: 'Oscillator Period', type: 'slider', min: 0.1, max: 10, default: 4, step: 0.1},
+        {id: 'skewStrength', label: 'Skew Strength', type: 'slider', min: 0, max: 2.0, default: 0.5, step: 0.05},
+        {id: 'topKTiles', label: 'Top Tiles (k)', type: 'slider', min: 1, max: 16, default: 4, step: 1}
+    ];
+
+    const modulesConfig = [
+        {id: 'global', title: 'Global Profiling', hasCanvas: false, isGlobal: true},
+        {id: 'inputs', title: 'Inputs', toggleId: 'inputs', hasCanvas: true},
+        {id: 'ref', title: 'Reference', toggleId: 'ref', hasCanvas: true},
+        {id: 'diff', title: 'Search Similarity', toggleId: 'diff', hasCanvas: true},
+        {id: 'postprocess', title: 'Summer Output', toggleId: 'postprocess', hasCanvas: true},
+        {id: 'viz', title: 'Top Source Tiles', toggleId: 'viz', hasCanvas: true}
+    ];
+    
+    controlsConfig.forEach(createControlGroup);
+    modulesConfig.forEach(createModule);
+    uiControls.scheduler.changed(()=>appState.needsRefRecompute=true);
+    uiControls.blockSize.changed(()=>appState.needsRefRecompute=true);
+    
+    // --- FIX: Create canvases here, after their parent divs are created ---
+    appState.canvases.inputs = createGraphics(1,1).parent('panel-inputs');
+    appState.canvases.ref = createGraphics(1,1).parent('panel-ref');
+    appState.canvases.diff = createGraphics(1,1).parent('panel-diff');
+    appState.canvases.postprocess = createGraphics(1,1).parent('panel-postprocess');
+    appState.canvases.viz = createGraphics(1,1).parent('panel-viz');
+    
+    console.log(`Initializing ${NUM_WORKERS} workers...`);
+    for (let i = 0; i < NUM_WORKERS; i++) {
+        const worker = new Worker('worker.js');
+        worker.addEventListener('message', (e) => {
+            if (e.data.status === 'ready') {
+                readyWorkers++;
+                console.log(`Worker ${i + 1}/${NUM_WORKERS} is ready.`);
+                if (readyWorkers === NUM_WORKERS) {
+                    console.log("All workers are ready. Starting computation loop.");
+                    runComputationLoop();
+                }
+            }
+        });
+        workers.push(worker);
+    }
+
+    appState.video=createCapture(VIDEO, ()=>console.log("Webcam ready."));
+    appState.video.size(PANEL_SIZE,PANEL_SIZE); appState.video.hide();
+    appState.staticRefImage = createGraphics(PANEL_SIZE, PANEL_SIZE);
+    appState.manualKeyframe = createGraphics(PANEL_SIZE, PANEL_SIZE);
+    appState.tracerImage = createGraphics(PANEL_SIZE, PANEL_SIZE);
+}
+
+function draw() {
+    if(uiControls.similarityThresh) {
+        const sliderEl=uiControls.similarityThresh.elt;
+        if(uiControls.adaptiveRange.checked()){sliderEl.min=appState.emaMin;sliderEl.max=appState.emaMax;}else{sliderEl.min=-3;sliderEl.max=1.5;}
+    }
+}
+function keyPressed() { if (key.toLowerCase()==='c') { appState.manualKeyframe.image(appState.video,0,0,PANEL_SIZE,PANEL_SIZE); uiControls.scheduler.selected('Manual Keyframe'); appState.needsRefRecompute=true; console.log("Keyframe captured."); } }
+
+</script>
+</body>
+</html>

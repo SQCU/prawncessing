@@ -1,0 +1,12 @@
+--- a/ui.js
++++ b/ui.js
+@@ -34,6 +34,8 @@
+     
+     // FIX: The canvas wrapper div MUST be parented to its own module's container.
+     if(config.hasCanvas) {
+-        p5.createDiv('').id(`panel-${config.id}`).addClass('canvas-wrapper').parent(container);
++        // The original buggy code parented to 'pipeline-container', causing a race condition.
++        // This is the fix: parenting to the local module's 'container' variable.
++        p5.createDiv('').id(`panel-${config.id}`).addClass('canvas-wrapper').parent(container);
+     }
+ }

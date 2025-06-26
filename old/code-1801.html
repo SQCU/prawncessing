@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Professional DCT Compression Visualizer</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f0f0f0; color: #333; display: flex; flex-direction: column; align-items: center; margin: 0; padding: 20px; }
+        h1 { margin-bottom: 20px; }
+        #controls { background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: flex; flex-wrap: wrap; gap: 15px 25px; margin-bottom: 20px; align-items: center; justify-content: center; }
+        .control-group { display: flex; flex-direction: column; align-items: center; }
+        #perf-log { font-family: monospace; background-color: #222; color: #0f0; padding: 15px; border-radius: 5px; margin-bottom: 20px; min-width: 800px; text-align: left; white-space: pre; }
+        #main-canvas-container { border: 1px solid #ccc; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        label { font-weight: bold; margin-bottom: 5px; }
+        select, input[type="range"] { width: 120px; }
+        .switch { position: relative; display: inline-block; width: 50px; height: 28px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 28px; }
+        .slider:before { position: absolute; content: ""; height: 20px; width: 20px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: #2196F3; }
+        input:checked + .slider:before { transform: translateX(22px); }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+</head>
+<body>
+    <h1>Professional DCT Compression Visualizer</h1>
+    <div id="controls">
+        <div class="control-group"><label>Scheduler (REF)</label><div id="scheduler-control"></div></div>
+        <div class="control-group"><label>Block Size</label><div id="block-size-control"></div></div>
+        <div class="control-group"><label>Resolution</label><div id="resolution-control"></div></div>
+        <div class="control-group"><label>Interpolation (n)</label><div id="n-control"></div></div>
+        <div class="control-group"><label>Similarity Thresh</label><div id="similarity-control"></div></div>
+        <div class="control-group"><label>Adaptive Range</label><div id="adaptive-toggle-control"></div></div>
+        <div class="control-group"><label>EMA Alpha</label><div id="ema-alpha-control"></div></div>
+        <div class="control-group"><label>Oscillator Period</label><div id="osc-period-control"></div></div>
+        <div class="control-group"><label>Skew Strength</label><div id="skew-strength-control"></div></div>
+        <div class="control-group"><label>Top Tiles (k)</label><div id="top-k-control"></div></div>
+    </div>
+    <div id="perf-log">Loading...</div>
+    <div id="main-canvas-container"></div>
+
+<script>
+// --- DCT/IDCT Math Library (Unchanged) ---
+function dct1d(data){const N=data.length,c=new Float32Array(N),t=Math.PI/(2*N);for(let o=0;o<N;o++){let r=0;for(let c=0;c<N;c++)r+=data[c]*Math.cos((2*c+1)*o*t);c[o]=(0===o?Math.sqrt(1/N):Math.sqrt(2/N))*r}return c}
+function idct1d(data){const N=data.length,c=new Float32Array(N),t=Math.PI/(2*N);for(let o=0;o<N;o++){let r=0;for(let c=0;c<N;c++){r+=(0===c?Math.sqrt(1/N):Math.sqrt(2/N))*data[c]*Math.cos((2*o+1)*c*t)}c[o]=r}return c}
+function dct2d(data){const N=data.length,c=Array(N).fill(0).map(()=>new Float32Array(N)),t=Array(N).fill(0).map(()=>new Float32Array(N));for(let o=0;o<N;o++)c[o]=dct1d(data[o]);for(let o=0;o<N;o++){const r=c.map(data=>data[o]),d=dct1d(r);for(let c=0;c<N;c++)t[c][o]=d[c]}return t}
+function idct2d(data){const N=data.length,c=Array(N).fill(0).map(()=>new Float32Array(N)),t=Array(N).fill(0).map(()=>new Float32Array(N));for(let o=0;o<N;o++)c[o]=idct1d(data[o]);for(let o=0;o<N;o++){const r=c.map(data=>data[o]),d=idct1d(r);for(let c=0;c<N;c++)t[c][o]=d[c]}return t}
+
+const PANEL_SIZE = 256;
+const GAP = 20;
+const NUM_WORKERS = navigator.hardwareConcurrency || 4;
+let workers = [];
+
+let appState = { 
+    video: null, staticRefImage: null, manualKeyframe: null, tracerImage: null,
+    buffers: { preprocessed: null, ref: null, diff: null, output: null, topTiles: null }, 
+    needsRefRecompute: true, refCoeffsGrid: [], lastProcW: -1, lastProcH: -1, 
+    highlightRect: null, stats: "Initializing...", isComputing: false,
+    emaMin: -2.0, emaMax: 1.0, emaMedian: -0.5,
+    lastFrameDecisions: [] // Stores the plan from the workers for visualization
+};
+let blockSizeSlider, resolutionSlider, scheduler, nSlider, similaritySlider, adaptiveToggle, emaAlphaSlider, oscPeriodSlider, skewStrengthSlider, topKSlider;
+
+// --- UTILITY FUNCTIONS ---
+function createPlaceholderImage(size) { let pg = createGraphics(size, size); pg.background(100); pg.stroke(200); pg.strokeWeight(2); pg.noFill(); pg.ellipse(size/2, size/2, size*0.8, size*0.8); pg.line(0, size/2, size, size/2); pg.line(size/2, 0, size/2, size); return pg; }
+function extractRGBBlock(sourceBuffer, x, y, blockSize) { const block = [Array(blockSize).fill(0).map(()=>new Float32Array(blockSize)), Array(blockSize).fill(0).map(()=>new Float32Array(blockSize)), Array(blockSize).fill(0).map(()=>new Float32Array(blockSize))]; for (let j=0; j<blockSize; j++) { for (let i=0; i<blockSize; i++) { const idx = ((y+j)*sourceBuffer.width+(x+i))*4; block[0][j][i] = sourceBuffer.pixels[idx]-128; block[1][j][i] = sourceBuffer.pixels[idx+1]-128; block[2][j][i] = sourceBuffer.pixels[idx+2]-128; } } return block; }
+function computeRGBDCT(rgbBlock) { return [dct2d(rgbBlock[0]), dct2d(rgbBlock[1]), dct2d(rgbBlock[2])]; }
+
+// --- NEW FEATURE: TRACER IMAGE GENERATION ---
+/**
+ * Creates a teal and orange zig-zag pattern.
+ * @param {p5.Graphics} pg - The graphics buffer to draw on.
+ */
+function createTracerImage(pg) {
+    pg.background(0);
+    pg.noStroke();
+    const orange = color(255, 165, 0);
+    const teal = color(0, 128, 128);
+    const segmentHeight = pg.height / 8;
+    for (let i = 0; i < 8; i++) {
+        pg.fill(i % 2 === 0 ? orange : teal);
+        pg.beginShape();
+        pg.vertex(0, i * segmentHeight);
+        pg.vertex(pg.width, i * segmentHeight);
+        pg.vertex(pg.width, (i + 1) * segmentHeight);
+        pg.vertex(0, (i + 1) * segmentHeight);
+        pg.endShape(CLOSE);
+    }
+}
+
+function setup() {
+    createCanvas(PANEL_SIZE * 6 + GAP * 5, PANEL_SIZE + 40).parent('main-canvas-container'); // Expanded for 6 panels
+    console.log(`Initializing ${NUM_WORKERS} workers...`);
+    for (let i = 0; i < NUM_WORKERS; i++) workers.push(new Worker('worker.js'));
+    
+    scheduler = createSelect().parent('scheduler-control').changed(() => { appState.needsRefRecompute = true; });
+    scheduler.option('Previous Frame'); scheduler.option('Static Image'); scheduler.option('Manual Keyframe'); scheduler.option('Tracer'); // New option
+    blockSizeSlider = createSlider(4, 32, 8, 4).parent('block-size-control').changed(() => { appState.needsRefRecompute = true; });
+    resolutionSlider = createSlider(0.25, 1.0, 0.5, 0.05).parent('resolution-control');
+    nSlider = createSlider(0, 1, 0.5, 0.01).parent('n-control');
+    similaritySlider = createSlider(-3, 1.5, -1.0, 0.1).parent('similarity-control');
+    adaptiveToggle = createCheckbox('', false).parent('adaptive-toggle-control');
+    emaAlphaSlider = createSlider(0.01, 0.5, 0.1, 0.01).parent('ema-alpha-control');
+    oscPeriodSlider = createSlider(0.1, 10, 4, 0.1).parent('osc-period-control'); // In seconds
+    skewStrengthSlider = createSlider(0, 2.0, 0.5, 0.05).parent('skew-strength-control'); // Skew factor
+    topKSlider = createSlider(1, 16, 4, 1).parent('top-k-control');
+
+    appState.video = createCapture(VIDEO, () => console.log("Webcam ready."));
+    appState.video.size(PANEL_SIZE, PANEL_SIZE);
+    appState.video.hide();
+    appState.staticRefImage = createPlaceholderImage(PANEL_SIZE);
+    appState.manualKeyframe = createPlaceholderImage(PANEL_SIZE);
+    appState.tracerImage = createGraphics(PANEL_SIZE, PANEL_SIZE); // Buffer for tracer
+    
+    runComputationLoop();
+}
+
+function keyPressed() { if (key.toLowerCase()==='c') { appState.manualKeyframe.image(appState.video, 0, 0, PANEL_SIZE, PANEL_SIZE); scheduler.selected('Manual Keyframe'); appState.needsRefRecompute = true; console.log("Keyframe captured."); } }
+
+async function runComputationLoop() {
+    while (true) {
+        if (!appState.video || appState.video.width === 0 || appState.isComputing) {
+            await new Promise(resolve => setTimeout(resolve, 10)); continue;
+        }
+        appState.isComputing = true;
+        const frameStartTime = performance.now();
+        const currentBlockSize = blockSizeSlider.value();
+        const currentScale = resolutionSlider.value();
+        const procW = floor(PANEL_SIZE * currentScale);
+        const procH = floor(PANEL_SIZE * currentScale);
+
+        if (procW !== appState.lastProcW || procH !== appState.lastProcH) {
+            appState.buffers.preprocessed = createGraphics(procW, procH);
+            appState.buffers.ref = createGraphics(procW, procH);
+            appState.buffers.diff = createGraphics(procW, procH);
+            appState.buffers.output = createGraphics(procW, procH);
+            appState.buffers.topTiles = createGraphics(PANEL_SIZE, PANEL_SIZE);
+            appState.lastProcW = procW; appState.lastProcH = procH;
+            appState.needsRefRecompute = true;
+        }
+
+        appState.buffers.preprocessed.image(appState.video, 0, 0, procW, procH);
+        
+        let currentRefSource;
+        const schedulerMode = scheduler.value();
+        if(schedulerMode === 'Previous Frame' && appState.buffers.output.width > 0) currentRefSource = appState.buffers.output;
+        else if (schedulerMode === 'Manual Keyframe') currentRefSource = appState.manualKeyframe;
+        else if (schedulerMode === 'Tracer') {
+            createTracerImage(appState.tracerImage); // Generate the base tracer
+            currentRefSource = appState.tracerImage;
+        } else { currentRefSource = appState.staticRefImage; }
+        
+        // This makes ref computation necessary for any dynamic source
+        if(schedulerMode !== 'Static Image') appState.needsRefRecompute = true;
+        
+        appState.buffers.ref.image(currentRefSource, 0, 0, procW, procH);
+
+        // --- NEW FEATURE: GENERIC SHEAR TRANSFORM ---
+        // This modular step applies a shear transformation to the reference buffer
+        // AFTER the source has been chosen and drawn, but BEFORE coefficients are computed.
+        // It works on any source, including the new tracer.
+        if (schedulerMode === 'Tracer') { // Or apply to all if desired
+            const skew = skewStrengthSlider.value();
+            const period = oscPeriodSlider.value();
+            const time = millis() / 1000.0; // time in seconds
+            const shearAngle = Math.sin(TWO_PI * time / period) * skew;
+            
+            // Apply a shear matrix transformation
+            let tempLayer = createGraphics(procW, procH);
+            tempLayer.push();
+            tempLayer.translate(procW / 2, procH / 2); // Shear from the center
+            tempLayer.shearX(shearAngle);
+            tempLayer.image(appState.buffers.ref, -procW / 2, -procH / 2, procW, procH);
+            tempLayer.pop();
+            appState.buffers.ref.image(tempLayer, 0, 0, procW, procH); // Overwrite ref buffer with sheared version
+            tempLayer.remove(); // free memory
+        }
+
+        if (appState.needsRefRecompute) {
+            const ref = appState.buffers.ref;
+            ref.loadPixels();
+            appState.refCoeffsGrid = [];
+            for(let gy=0; gy < floor(ref.height / currentBlockSize); gy++){
+                for(let gx=0; gx < floor(ref.width / currentBlockSize); gx++){
+                    appState.refCoeffsGrid.push({pos: {x:gx,y:gy}, coeffs: computeRGBDCT(extractRGBBlock(ref, gx*currentBlockSize, gy*currentBlockSize, currentBlockSize))});
+                }
+            }
+            appState.needsRefRecompute = false;
+        }
+        
+        const searchStart = performance.now();
+        appState.buffers.preprocessed.loadPixels();
+        const promises = workers.map((worker, i) => new Promise(resolve => {
+            const rowsPerWorker = Math.ceil(procH / NUM_WORKERS);
+            const startRow = i * rowsPerWorker;
+            if (startRow >= procH) return resolve(null);
+            const sliceHeight = endRow - startRow;
+            const sliceData = appState.buffers.preprocessed.pixels.slice(startRow * procW * 4, endRow * procW * 4);
+            
+            worker.onmessage = e => resolve(e.data);
+            worker.postMessage({
+                operation: 'process_slice', procW, procH: sliceHeight, blockSize: currentBlockSize, nValue: nSlider.value(),
+                similarityThreshold: similaritySlider.value(),
+                inputSlice: { data: sliceData, width: procW, height: sliceHeight },
+                refCoeffsGrid: appState.refCoeffsGrid
+            });
+        }));
+
+        const workerResults = await Promise.all(promises);
+        const searchTime = performance.now() - searchStart;
+        
+        // --- AGGREGATE STATS & DECISIONS FROM WORKERS ---
+        const allScores = workerResults.flatMap(r => r && r.frameStats ? r.frameStats.scores : []);
+        appState.lastFrameDecisions = workerResults.flatMap(r => r ? r.decisionPlan : []);
+        
+        if (allScores.length > 0) {
+            const frameMin = Math.min(...allScores);
+            const frameMax = Math.max(...allScores);
+            allScores.sort((a, b) => a - b);
+            const frameMedian = allScores[Math.floor(allScores.length / 2)];
+            const alpha = emaAlphaSlider.value();
+            appState.emaMin = alpha * frameMin + (1 - alpha) * appState.emaMin;
+            appState.emaMax = alpha * frameMax + (1 - alpha) * appState.emaMax;
+            appState.emaMedian = alpha * frameMedian + (1 - alpha) * appState.emaMedian;
+        }
+        
+        // --- POPULATE OUTPUT BUFFER ---
+        appState.buffers.output.loadPixels();
+        workerResults.forEach((result, i) => {
+            if (result && result.outputPixels) {
+                const rowsPerWorker = Math.ceil(procH / NUM_WORKERS);
+                const startRow = i * rowsPerWorker;
+                appState.buffers.output.pixels.set(result.outputPixels, startRow * procW * 4);
+            }
+        });
+        appState.buffers.output.updatePixels();
+        
+        // --- EXPANDED LOGGING ---
+        const resInfo = `Res:${procW}x${procH} B:${currentBlockSize}`;
+        const paramsInfo = `n:${nSlider.value().toFixed(2)} Thresh:${similaritySlider.value().toFixed(2)}`;
+        const emaInfo = `EMA Min/Max:${appState.emaMin.toFixed(2)}/${appState.emaMax.toFixed(2)}`;
+        appState.stats = `Frame:${(performance.now() - frameStartTime).toFixed(1)}ms | Search:${searchTime.toFixed(1)}ms | ${resInfo} | ${paramsInfo} | ${emaInfo}`;
+        appState.isComputing = false;
+    }
+}
+
+function draw() {
+    const sliderElement = similaritySlider.elt;
+    if (adaptiveToggle.checked()) {
+        sliderElement.min = appState.emaMin; sliderElement.max = appState.emaMax;
+    } else { sliderElement.min = -3; sliderElement.max = 1.5; }
+
+    document.getElementById('perf-log').innerHTML = appState.stats;
+
+    background('#f0f0f0');
+    
+    // --- NEW FEATURE: REVISED DIFF VISUALIZATION ---
+    // This rendering is done on the main thread using the decision plan from the workers.
+    appState.buffers.diff.background(0);
+    appState.lastFrameDecisions.forEach(decision => {
+        const { gx, gy, blockDecision } = decision;
+        const bs = blockSizeSlider.value();
+        const sx = gx * bs; const sy = gy * bs;
+        
+        // Get the original input block to draw from
+        const inputBlock = appState.buffers.preprocessed.get(sx, sy, bs, bs);
+
+        if (blockDecision === 'interpolate') {
+            // Low-threshold (modified) blocks are semi-transparent
+            appState.buffers.diff.push();
+            appState.buffers.diff.tint(255, 127); // 50% transparent
+            appState.buffers.diff.image(inputBlock, sx, sy, bs, bs);
+            appState.buffers.diff.pop();
+        } else {
+            // High-threshold (passthrough) blocks are high-contrast/vibrance
+            appState.buffers.diff.push();
+            appState.buffers.diff.colorMode(HSB);
+            appState.buffers.diff.image(inputBlock, sx, sy, bs, bs);
+            // Apply a filter to boost vibrance/contrast. A simple brightness/contrast boost:
+            appState.buffers.diff.filter(POSTERIZE, 4);
+            appState.buffers.diff.filter(INVERT);
+            appState.buffers.diff.pop();
+        }
+    });
+
+    // --- NEW FEATURE: TOP K SOURCE TILES VISUALIZATION ---
+    const topK = topKSlider.value();
+    const sourceCounts = {};
+    appState.lastFrameDecisions.forEach(d => {
+        if(d.blockDecision === 'interpolate') {
+            const key = `${d.refPos.x},${d.refPos.y}`;
+            sourceCounts[key] = (sourceCounts[key] || 0) + 1;
+        }
+    });
+    const sortedSources = Object.entries(sourceCounts).sort((a,b) => b[1] - a[1]);
+    appState.buffers.topTiles.background(50);
+    appState.buffers.topTiles.noStroke();
+    const bs = blockSizeSlider.value();
+    for(let i=0; i < Math.min(topK, sortedSources.length); i++) {
+        const [key, count] = sortedSources[i];
+        const [refX, refY] = key.split(',').map(Number);
+        const sourceTile = appState.buffers.ref.get(refX * bs, refY * bs, bs, bs);
+        
+        // Display tiles in a grid on the topTiles panel
+        const tileX = (i % 4) * (PANEL_SIZE / 4);
+        const tileY = floor(i / 4) * (PANEL_SIZE / 4);
+        appState.buffers.topTiles.image(sourceTile, tileX, tileY, PANEL_SIZE / 4, PANEL_SIZE / 4);
+    }
+    
+    // --- MAIN DRAWING LOGIC ---
+    const panels = ['Input (IMG)', 'Reference (REF)', 'Search Similarity', 'Summer Output', 'Top Source Tiles'];
+    if (scheduler.value() === 'Tracer') panels.unshift('Raw Tracer');
+    
+    const procW=appState.lastProcW; const s=PANEL_SIZE/procW;
+    const buffers = {
+        'Raw Tracer': appState.tracerImage, 'Input (IMG)': appState.buffers.preprocessed,
+        'Reference (REF)': appState.buffers.ref, 'Search Similarity': appState.buffers.diff, 
+        'Summer Output': appState.buffers.output, 'Top Source Tiles': appState.buffers.topTiles
+    };
+    
+    let xOffset = 0;
+    panels.forEach(p => {
+        if (buffers[p]) {
+            image(buffers[p], xOffset, 0, PANEL_SIZE, PANEL_SIZE);
+            if(p === 'Input (IMG)' && appState.highlightRect) { 
+                noFill(); stroke(255,255,0); strokeWeight(2); 
+                rect(xOffset+appState.highlightRect.x*s, appState.highlightRect.y*s, appState.highlightRect.w*s, appState.highlightRect.h*s); 
+            }
+            fill(51); noStroke(); textAlign(CENTER); text(p, xOffset + PANEL_SIZE / 2, PANEL_SIZE + 20);
+            xOffset += PANEL_SIZE + GAP;
+        }
+    });
+}
+</script>
+</body>
+</html>

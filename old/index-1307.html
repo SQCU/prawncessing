@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced DCT Visualizer</title>
+    <style>
+        :root {
+            --panel-size: 256px;
+            --gap-size: 20px;
+            --border-color: #ccc;
+            --bg-color: #f0f0f0;
+            --panel-bg: white;
+            --text-color: #333;
+        }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color); 
+            color: var(--text-color);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 { margin-bottom: 20px; }
+        #controls {
+            background-color: var(--panel-bg);
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px 40px;
+            margin-bottom: 20px;
+            align-items: center;
+            justify-content: center;
+        }
+        .control-group { display: flex; flex-direction: column; align-items: center; }
+        #perf-log { font-family: monospace; background-color: #222; color: #0f0; padding: 15px; border-radius: 5px; margin-bottom: 20px; min-width: 450px; text-align: left; }
+        
+        #canvas-container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: var(--gap-size);
+            width: 100%;
+        }
+        .canvas-wrapper {
+            display: flex;
+            flex-direction: column;
+            border: 1px solid var(--border-color);
+            padding: 10px;
+            background-color: var(--panel-bg);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            width: var(--panel-size);
+        }
+        .canvas-wrapper h2 { text-align: center; font-size: 1em; margin: 0 0 10px 0; }
+        .canvas-wrapper canvas { display: block; width: 100% !important; height: auto !important; }
+
+        .switch { position: relative; display: inline-block; width: 50px; height: 28px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 28px; }
+        .slider:before { position: absolute; content: ""; height: 20px; width: 20px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: #2196F3; }
+        input:checked + .slider:before { transform: translateX(22px); }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+</head>
+<body>
+    <h1>Advanced DCT Visualizer</h1>
+    <div id="controls">
+        <div class="control-group">
+            <label>Block Size</label>
+            <div id="block-size-control"></div>
+        </div>
+        <div class="control-group">
+            <label>Processing Resolution</label>
+            <div id="resolution-control"></div>
+        </div>
+        <div class="control-group">
+            <label>In-Depth View</label>
+            <label class="switch">
+                <input type="checkbox" id="view-toggle">
+                <span class="slider"></span>
+            </label>
+        </div>
+    </div>
+    <div id="perf-log">Loading...</div>
+    <div id="canvas-container">
+        <div id="raw-input-wrapper" class="canvas-wrapper" style="display: none;">
+            <h2>Raw Input</h2>
+            <div id="raw-input-canvas"></div>
+        </div>
+        <div id="preprocessed-wrapper" class="canvas-wrapper">
+            <h2 id="preprocessed-title">Input to DCT</h2>
+            <div id="preprocessed-canvas"></div>
+        </div>
+        <div id="dct-wrapper" class="canvas-wrapper">
+            <h2>DCT Coeffs</h2>
+            <div id="dct-canvas"></div>
+        </div>
+        <div id="idct-wrapper" class="canvas-wrapper" style="display: none;">
+            <h2>IDCT Coeffs</h2>
+            <div id="idct-canvas"></div>
+        </div>
+        <div id="output-wrapper" class="canvas-wrapper">
+            <h2>Reconstructed</h2>
+            <div id="output-canvas"></div>
+        </div>
+    </div>
+
+<script>
+// --- DCT/IDCT Math Library (Minified) ---
+function dct1d(data){const N=data.length,c=new Float32Array(N),t=Math.PI/(2*N);for(let o=0;o<N;o++){let r=0;for(let c=0;c<N;c++)r+=data[c]*Math.cos((2*c+1)*o*t);c[o]=(0===o?Math.sqrt(1/N):Math.sqrt(2/N))*r}return c}function idct1d(data){const N=data.length,c=new Float32Array(N),t=Math.PI/(2*N);for(let o=0;o<N;o++){let r=0;for(let c=0;c<N;c++){r+=(0===c?Math.sqrt(1/N):Math.sqrt(2/N))*data[c]*Math.cos((2*o+1)*c*t)}c[o]=r}return c}function dct2d(data){const N=data.length,c=Array(N).fill(0).map(()=>new Float32Array(N)),t=Array(N).fill(0).map(()=>new Float32Array(N));for(let o=0;o<N;o++)c[o]=dct1d(data[o]);for(let o=0;o<N;o++){const r=c.map(data=>data[o]),d=dct1d(r);for(let c=0;c<N;c++)t[c][o]=d[c]}return t}function idct2d(data){const N=data.length,c=Array(N).fill(0).map(()=>new Float32Array(N)),t=Array(N).fill(0).map(()=>new Float32Array(N));for(let o=0;o<N;o++)c[o]=idct1d(data[o]);for(let o=0;o<N;o++){const r=c.map(data=>data[o]),d=idct1d(r);for(let c=0;c<N;c++)t[c][o]=d[c]}return t}
+
+document.addEventListener('DOMContentLoaded', () => {
+
+    // --- Global State ---
+    let video;
+    let preprocessedVideo, dctCanvas, idctCoeffsCanvas, outputCanvas;
+    let blockSizeSlider, resolutionSlider, viewToggle;
+    let lastProcW = -1, lastProcH = -1;
+
+    // --- Panel Instances ---
+    let displaySketches = {};
+
+    // --- Panel Factory: Creates a passive display sketch ---
+    const createDisplayPanel = (parentId, bufferProvider) => {
+        return new p5(p => {
+            p.setup = () => {
+                const size = document.getElementById(parentId).clientWidth;
+                p.createCanvas(size, size).parent(parentId);
+                p.noLoop(); // This sketch will only draw when told to.
+            };
+            p.draw = () => {
+                const buffer = bufferProvider();
+                if (buffer) {
+                    p.background(0); // Clear previous frame
+                    // THE FIX: image() automatically scales the buffer to fit the canvas.
+                    p.image(buffer, 0, 0, p.width, p.height);
+                }
+            };
+        });
+    };
+
+    // --- Main Controller Sketch ---
+    const controllerP5 = new p5(p => {
+        p.setup = () => {
+            p.noCanvas(); // This instance does calculations only.
+
+            // Initialize video and UI
+            video = p.createCapture(p.VIDEO, () => {
+                 console.log("Webcam ready.");
+            });
+            video.size(256, 256);
+            video.hide();
+            
+            blockSizeSlider = p.createSlider(4, 32, 8, 4).parent('block-size-control');
+            resolutionSlider = p.createSlider(0.25, 1.0, 1.0, 0.05).parent('resolution-control');
+            viewToggle = document.getElementById('view-toggle');
+            viewToggle.addEventListener('change', updateLayout);
+            
+            // Create all display panels
+            displaySketches.raw = createDisplayPanel('raw-input-canvas', () => video);
+            displaySketches.preprocessed = createDisplayPanel('preprocessed-canvas', () => preprocessedVideo);
+            displaySketches.dct = createDisplayPanel('dct-canvas', () => dctCanvas);
+            displaySketches.idct = createDisplayPanel('idct-canvas', () => idctCoeffsCanvas);
+            displaySketches.output = createDisplayPanel('output-canvas', () => outputCanvas);
+
+            updateLayout();
+        };
+
+        p.draw = () => { // This is our single, authoritative update loop.
+            if (video.width === 0) return;
+
+            const frameStartTime = performance.now();
+            let totalDctTime = 0, totalIdctTime = 0;
+
+            const currentBlockSize = blockSizeSlider.value();
+            const currentScale = resolutionSlider.value();
+            const procW = p.floor(256 * currentScale);
+            const procH = p.floor(256 * currentScale);
+
+            if (procW !== lastProcW || procH !== lastProcH) {
+                preprocessedVideo = p.createGraphics(procW, procH);
+                dctCanvas = p.createGraphics(procW, procH);
+                idctCoeffsCanvas = p.createGraphics(procW, procH);
+                outputCanvas = p.createGraphics(procW, procH);
+                lastProcW = procW;
+                lastProcH = procH;
+            }
+
+            preprocessedVideo.image(video, 0, 0, procW, procH);
+            
+            // --- The main processing logic ---
+            preprocessedVideo.loadPixels();
+            dctCanvas.loadPixels();
+            outputCanvas.loadPixels();
+
+            for (let y = 0; y < procH; y += currentBlockSize) {
+                for (let x = 0; x < procW; x += currentBlockSize) {
+                    const w = Math.min(currentBlockSize, procW - x);
+                    const h = Math.min(currentBlockSize, procH - y);
+                    if (w !== h || w !== currentBlockSize) continue;
+
+                    const block = Array(w).fill(0).map(() => new Float32Array(h));
+                    for (let j = 0; j < h; j++) {
+                        for (let i = 0; i < w; i++) {
+                            const idx = ((y + j) * procW + (x + i)) * 4;
+                            block[j][i] = (0.299 * preprocessedVideo.pixels[idx] + 0.587 * preprocessedVideo.pixels[idx+1] + 0.114 * preprocessedVideo.pixels[idx+2]) - 128;
+                        }
+                    }
+                    
+                    const dctStartTime = performance.now();
+                    const coeffs = dct2d(block);
+                    totalDctTime += performance.now() - dctStartTime;
+
+                    const idctStartTime = performance.now();
+                    const reconstructed = idct2d(coeffs);
+                    totalIdctTime += performance.now() - idctStartTime;
+                    
+                    for (let j = 0; j < h; j++) {
+                        for (let i = 0; i < w; i++) {
+                            const dctVal = p.log(p.abs(coeffs[j][i]) + 1) * 20; 
+                            const reconVal = reconstructed[j][i] + 128;
+                            const canvasIdx = ((y + j) * procW + (x + i)) * 4;
+                            dctCanvas.pixels[canvasIdx] = dctCanvas.pixels[canvasIdx+1] = dctCanvas.pixels[canvasIdx+2] = dctVal;
+                            dctCanvas.pixels[canvasIdx+3] = 255;
+                            outputCanvas.pixels[canvasIdx] = outputCanvas.pixels[canvasIdx+1] = outputCanvas.pixels[canvasIdx+2] = reconVal;
+                            outputCanvas.pixels[canvasIdx+3] = 255;
+                        }
+                    }
+                }
+            }
+            
+            dctCanvas.updatePixels();
+            outputCanvas.updatePixels();
+            idctCoeffsCanvas.background(50, 50, 80).text('IDCT Coeffs\n(Not Implemented)', procW / 2, procH / 2);
+
+            document.getElementById('perf-log').innerHTML = `Frame Time: ${(performance.now() - frameStartTime).toFixed(1)} ms | DCT Time: ${totalDctTime.toFixed(1)} ms | Block: ${currentBlockSize}x${currentBlockSize} | Res: ${procW}x${procH}`;
+            
+            // --- Explicitly redraw all panels ---
+            for (const key in displaySketches) {
+                displaySketches[key].redraw();
+            }
+        };
+    });
+
+    function updateLayout() {
+        const isIndepth = viewToggle.checked;
+        document.getElementById('raw-input-wrapper').style.display = isIndepth ? 'flex' : 'none';
+        document.getElementById('idct-wrapper').style.display = isIndepth ? 'flex' : 'none';
+        document.getElementById('preprocessed-title').innerText = isIndepth ? 'Preprocessed' : 'Input to DCT';
+    }
+});
+</script>
+</body>
+</html>

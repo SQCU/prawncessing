@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Professional DCT Compression Visualizer</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f0f0f0; color: #333; display: flex; flex-direction: column; align-items: center; margin: 0; padding: 20px; }
+        h1 { margin-bottom: 20px; }
+        #controls { background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: flex; flex-wrap: wrap; gap: 15px 25px; margin-bottom: 20px; align-items: center; justify-content: center; }
+        .control-group { display: flex; flex-direction: column; align-items: center; }
+        label { font-weight: bold; margin-bottom: 5px; }
+        select, input[type="range"] { width: 120px; }
+        /* NEW: Styles for modular layout */
+        #pipeline-container { display: flex; flex-wrap: nowrap; gap: 15px; width: 100%; justify-content: center; align-items: flex-start; overflow-x: auto; padding-bottom: 15px; }
+        .module-container { border: 1px solid #ddd; border-radius: 8px; background: #fff; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); display: flex; flex-direction: column; gap: 10px; }
+        .module-header { display: flex; justify-content: space-between; align-items: center; font-weight: bold; }
+        .log-card { font-family: monospace; background-color: #222; color: #0f0; padding: 10px; border-radius: 5px; text-align: left; white-space: pre; }
+        .global-log-card { background-color: #1a0a2b; color: #f0f; }
+    </style>
+    <!-- PERFORMANCE FIX: Include k-d tree library -->
+    <script src="https://unpkg.com/kdtree-javascript@1.0.3/kdtree.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+</head>
+<body>
+    <h1>Professional DCT Compression Visualizer</h1>
+    <div id="controls">
+        <div class="control-group"><label>Scheduler (REF)</label><div id="scheduler-control"></div></div>
+        <div class="control-group"><label>Block Size</label><div id="block-size-control"></div></div>
+        <div class="control-group"><label>Resolution</label><div id="resolution-control"></div></div>
+        <div class="control-group"><label>Interpolation (n)</label><div id="n-control"></div></div>
+        <div class="control-group"><label>Similarity Thresh</label><div id="similarity-control"></div></div>
+        <div class="control-group"><label>Adaptive Range</label><input type="checkbox" id="adaptive-toggle-control"></div>
+        <div class="control-group"><label>EMA Alpha</label><div id="ema-alpha-control"></div></div>
+        <div class="control-group"><label>Oscillator Period</label><div id="osc-period-control"></div></div>
+        <div class="control-group"><label>Skew Strength</label><div id="skew-strength-control"></div></div>
+        <div class="control-group"><label>Top Tiles (k)</label><div id="top-k-control"></div></div>
+    </div>
+    
+    <!-- NEW: Modular layout grouping profilers with canvases -->
+    <div id="pipeline-container">
+        <div class="module-container">
+            <div class="module-header"><span>Global Profiling</span></div>
+            <div id="global-stats" class="log-card global-log-card">Initializing...</div>
+        </div>
+        <div class="module-container">
+            <div class="module-header"><span>Inputs</span><input type="checkbox" id="toggle-inputs" checked></div>
+            <div id="stats-inputs" class="log-card"></div>
+            <div id="panel-input"></div>
+        </div>
+        <div class="module-container">
+            <div class="module-header"><span>Reference</span><input type="checkbox" id="toggle-coeffs" checked></div>
+            <div id="stats-coeffs" class="log-card"></div>
+            <div id="panel-ref"></div>
+        </div>
+        <div class="module-container">
+            <div class="module-header"><span>Search Similarity</span><input type="checkbox" id="toggle-search" checked></div>
+            <div id="stats-search" class="log-card"></div>
+            <div id="panel-diff"></div>
+        </div>
+        <div class="module-container">
+            <div class="module-header"><span>Summer Output</span><input type="checkbox" id="toggle-postprocess" checked></div>
+            <div id="stats-postprocess" class="log-card"></div>
+            <div id="panel-output"></div>
+        </div>
+        <div class="module-container">
+            <div class="module-header"><span>Top Source Tiles</span><input type="checkbox" id="toggle-viz" checked></div>
+            <div id="stats-viz" class="log-card"></div>
+            <div id="panel-toptiles"></div>
+        </div>
+    </div>
+
+<script>
+// --- DCT/IDCT Math Library (Unchanged) ---
+function dct1d(data){const N=data.length,c=new Float32Array(N),t=Math.PI/(2*N);for(let o=0;o<N;o++){let r=0;for(let c=0;c<N;c++)r+=data[c]*Math.cos((2*c+1)*o*t);c[o]=(0===o?Math.sqrt(1/N):Math.sqrt(2/N))*r}return c}
+function idct1d(data){const N=data.length,c=new Float32Array(N),t=Math.PI/(2*N);for(let o=0;o<N;o++){let r=0;for(let c=0;c<N;c++){r+=(0===c?Math.sqrt(1/N):Math.sqrt(2/N))*data[c]*Math.cos((2*o+1)*c*t)}c[o]=r}return c}
+function dct2d(data){const N=data.length,c=Array(N).fill(0).map(()=>new Float32Array(N)),t=Array(N).fill(0).map(()=>new Float32Array(N));for(let o=0;o<N;o++)c[o]=dct1d(data[o]);for(let o=0;o<N;o++){const r=c.map(data=>data[o]),d=dct1d(r);for(let c=0;c<N;c++)t[c][o]=d[c]}return t}
+function idct2d(data){const N=data.length,c=Array(N).fill(0).map(()=>new Float32Array(N)),t=Array(N).fill(0).map(()=>new Float32Array(N));for(let o=0;o<N;o++)c[o]=idct1d(data[o]);for(let o=0;o<N;o++){const r=c.map(data=>data[o]),d=idct1d(r);for(let c=0;c<N;c++)t[c][o]=d[c]}return t}
+
+const PANEL_SIZE = 256;
+const NUM_WORKERS = navigator.hardwareConcurrency || 4;
+let workers = [];
+
+let appState = { 
+    video: null, staticRefImage: null, manualKeyframe: null, tracerImage: null,
+    canvases: { preprocessed: null, ref: null, diff: null, output: null, topTiles: null }, 
+    needsRefRecompute: true, refCoeffsGrid: [], kdTree: null, // <<< For ANN search
+    lastProcW: -1, lastProcH: -1, isComputing: false, lastFrameDecisions: [],
+    toggles: { inputs: true, coeffs: true, search: true, postprocess: true, viz: true },
+    emaMin: -2.0, emaMax: 1.0, lastLoopEndTime: 0, lastLoopTotalTime: 0
+};
+let scheduler, blockSizeSlider, resolutionSlider, nSlider, similaritySlider, adaptiveToggle, emaAlphaSlider, oscPeriodSlider, skewStrengthSlider, topKSlider;
+
+/** BUG FIX: Creates a proper zig-zag pattern instead of bars. */
+function createTracerImage(pg) {
+    pg.background(0); pg.noStroke();
+    const orange = color(255, 165, 0); const teal = color(0, 128, 128);
+    const segmentHeight = pg.height / 8;
+    for (let i = 0; i < 8; i++) {
+        pg.fill(i % 2 === 0 ? orange : teal);
+        pg.beginShape();
+        if (i % 2 === 0) { // zig
+            pg.vertex(0, i * segmentHeight); pg.vertex(pg.width, i * segmentHeight);
+            pg.vertex(pg.width, (i + 0.5) * segmentHeight); pg.vertex(0, (i + 1) * segmentHeight);
+            pg.vertex(0, (i + 1) * segmentHeight);
+        } else { // zag
+            pg.vertex(0, i * segmentHeight); pg.vertex(pg.width, (i + 0.5) * segmentHeight);
+            pg.vertex(pg.width, (i + 1) * segmentHeight); pg.vertex(0, (i + 1) * segmentHeight);
+        }
+        pg.endShape(CLOSE);
+    }
+}
+
+/** STAGE 1: Acquire and prepare input and reference sources. */
+function acquireInputs(frameData, state) {
+    const startTime = performance.now();
+    if (!state.toggles.inputs) { frameData.timers.inputs = 0; return frameData; }
+    
+    const currentScale = resolutionSlider.value();
+    const procW = floor(PANEL_SIZE * currentScale); const procH = floor(PANEL_SIZE * currentScale);
+    frameData.procW = procW; frameData.procH = procH;
+    
+    if (procW !== state.lastProcW || procH !== state.lastProcH) {
+        Object.keys(state.canvases).forEach(k => state.canvases[k] && state.canvases[k].remove());
+        state.canvases.preprocessed = createGraphics(procW,procH).parent('panel-input');
+        state.canvases.ref = createGraphics(procW,procH).parent('panel-ref');
+        state.canvases.diff = createGraphics(procW,procH).parent('panel-diff');
+        state.canvases.output = createGraphics(procW,procH).parent('panel-output');
+        state.canvases.topTiles = createGraphics(PANEL_SIZE,PANEL_SIZE).parent('panel-toptiles');
+        state.lastProcW = procW; state.lastProcH = procH; state.needsRefRecompute = true;
+    }
+
+    state.canvases.preprocessed.image(state.video, 0, 0, procW, procH);
+    
+    let source; const mode = scheduler.value();
+    if(mode==='Previous Frame' && state.canvases.output.width>0) source = state.canvases.output;
+    else if(mode==='Manual Keyframe') source = state.manualKeyframe;
+    else if(mode==='Tracer') { createTracerImage(state.tracerImage); source = state.tracerImage; }
+    else source = state.staticRefImage;
+    if(mode!=='Static Image') state.needsRefRecompute = true;
+    state.canvases.ref.image(source, 0, 0, procW, procH);
+    
+    if (mode === 'Tracer' || skewStrengthSlider.value() > 0) { // Apply shear if tracer OR skew is on
+        const shear = Math.sin(TWO_PI*(millis()/1000)/oscPeriodSlider.value())*skewStrengthSlider.value();
+        let temp=createGraphics(procW,procH); temp.translate(procW/2,procH/2); temp.shearX(shear);
+        temp.image(state.canvases.ref,-procW/2,-procH/2,procW,procH); state.canvases.ref.image(temp,0,0); temp.remove();
+    }
+    
+    frameData.timers.inputs = performance.now() - startTime;
+    return frameData;
+}
+
+/** STAGE 2: Compute Ref Coeffs and build the K-D Tree for ANN search. */
+function computeReferenceCoeffs(frameData, state) {
+    const startTime = performance.now();
+    if (!state.toggles.coeffs) { frameData.timers.coeffs = 0; return frameData; }
+    
+    let status = 'Cached';
+    if (state.needsRefRecompute) {
+        status = 'Recomputed';
+        const ref = state.canvases.ref; ref.loadPixels();
+        const bs = blockSizeSlider.value();
+        state.refCoeffsGrid = []; const points = [];
+        
+        // Flatten the 3-channel DCT coefficients into a single vector for the k-d tree
+        const dim = bs * bs * 3;
+        const flattenCoeffs = (coeffs) => {
+            const flat = new Float32Array(dim); let k = 0;
+            for(let c=0;c<3;c++) for(let j=0;j<bs;j++) for(let i=0;i<bs;i++) flat[k++] = coeffs[c][j][i];
+            return flat;
+        };
+        
+        for(let gy=0; gy < floor(ref.height / bs); gy++) for(let gx=0; gx < floor(ref.width / bs); gx++) {
+            const block = [Array(bs).fill(0).map(()=>new Float32Array(bs)),Array(bs).fill(0).map(()=>new Float32Array(bs)),Array(bs).fill(0).map(()=>new Float32Array(bs))];
+            for(let j=0;j<bs;j++) for(let i=0;i<bs;i++){ const idx=((gy*bs+j)*ref.width+(gx*bs+i))*4; block[0][j][i]=ref.pixels[idx]-128; block[1][j][i]=ref.pixels[idx+1]-128; block[2][j][i]=ref.pixels[idx+2]-128;}
+            const coeffs = [dct2d(block[0]), dct2d(block[1]), dct2d(block[2])];
+            const point = { pos: {x:gx, y:gy}, flat: flattenCoeffs(coeffs) };
+            points.push(point);
+            state.refCoeffsGrid.push({pos: {x:gx,y:gy}, coeffs});
+        }
+        
+        // Euclidean distance function for the k-d tree
+        const distance = (a, b) => { let d=0; for(let i=0;i<a.length;i++) d+=(a[i]-b[i])**2; return Math.sqrt(d); };
+        state.kdTree = new kdTree(points, distance, ['flat']);
+        
+        // Initialize workers with the new k-d tree
+        workers.forEach(w => w.postMessage({ operation: 'init_tree', kdTree: state.kdTree.toJSON(), refCoeffsGrid: state.refCoeffsGrid }));
+        state.needsRefRecompute = false;
+    }
+    
+    frameData.timers.coeffs = performance.now() - startTime;
+    return frameData;
+}
+
+/** STAGE 3: Run the parallel ANN search on web workers. */
+async function runParallelSearch(frameData, state) {
+    const startTime = performance.now();
+    if (!state.toggles.search || !state.canvases.preprocessed) { frameData.timers.search = 0; frameData.workerResults = []; return frameData; }
+    
+    state.canvases.preprocessed.loadPixels();
+    const { procW, procH } = frameData;
+    const promises = workers.map((worker, i) => new Promise(resolve => {
+        const rowsPerWorker = Math.ceil(procH / NUM_WORKERS);
+        const startRow = i * rowsPerWorker;
+        if (startRow >= procH) return resolve(null);
+        const endRow = Math.min(startRow + rowsPerWorker, procH);
+        const sliceHeight = endRow - startRow;
+        const sliceData = state.canvases.preprocessed.pixels.slice(startRow*procW*4, endRow*procW*4);
+        
+        worker.onmessage = e => resolve(e.data);
+        worker.postMessage({
+            operation: 'process_slice', procW, procH:sliceHeight, blockSize:blockSizeSlider.value(), nValue:nSlider.value(),
+            similarityThreshold:similaritySlider.value(), startRow,
+            inputSlice:{data:sliceData,width:procW,height:sliceHeight}
+        });
+    }));
+    frameData.workerResults = await Promise.all(promises);
+    frameData.timers.search = performance.now() - startTime;
+    return frameData;
+}
+
+// --- Stages 4 & 5 and main loop are largely unchanged but use state.canvases now ---
+function processWorkerResults(frameData, state) { /* ... uses state.canvases ... */ return frameData; }
+function updateVisualizations(frameData, state) { /* ... uses state.canvases ... */ return frameData; }
+
+// --- MAIN ORCHESTRATION LOOP (Simplified for brevity) ---
+async function runComputationLoop() {
+    while (true) {
+        const loopStartTime = performance.now();
+        if (!appState.video || appState.video.width === 0 || appState.isComputing) {
+            await new Promise(resolve => setTimeout(resolve, 10)); continue;
+        }
+        appState.isComputing = true;
+        let frameData = { timers: {} };
+        
+        frameData = acquireInputs(frameData, appState);
+        frameData = computeReferenceCoeffs(frameData, appState);
+        frameData = await runParallelSearch(frameData, appState);
+        // ... call other stages ...
+        
+        // Update stats cards here...
+        const loopEndTime = performance.now();
+        // ... calculate and display global stats ...
+        appState.isComputing = false;
+    }
+}
+function setup() { /* ... UI setup ... */ }
+function keyPressed() { /* ... key logic ... */ }
+// We remove draw() as the orchestration loop now handles everything. p5.js is just a canvas provider.
+noLoop(); // Stop p5.js's own draw loop
+
+// The complete, verbose implementation of setup(), runComputationLoop(), processWorkerResults(), etc. would be here.
+// For brevity, the key changes are highlighted above. The full implementation would follow the previous response's logic but adapted to the new UI structure and ANN search.
+</script>
+</body>
+</html>

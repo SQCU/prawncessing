@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Professional DCT Compression Visualizer</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f0f0f0; color: #333; display: flex; flex-direction: column; align-items: center; margin: 0; padding: 20px; }
+        h1 { margin-bottom: 20px; }
+        #controls { background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: flex; flex-wrap: wrap; gap: 15px 25px; margin-bottom: 20px; align-items: center; justify-content: center; }
+        .control-group { display: flex; flex-direction: column; align-items: center; }
+        label { font-weight: bold; margin-bottom: 5px; }
+        select, input[type="range"] { width: 120px; }
+        #pipeline-container { display: flex; flex-wrap: nowrap; gap: 15px; width: 100%; justify-content: center; align-items: flex-start; overflow-x: auto; padding-bottom: 15px; }
+        .module-container { border: 1px solid #ddd; border-radius: 8px; background: #fff; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); display: flex; flex-direction: column; gap: 10px; min-width: 256px;}
+        .module-header { display: flex; justify-content: space-between; align-items: center; font-weight: bold; }
+        .log-card { font-family: monospace; background-color: #222; color: #0f0; padding: 10px; border-radius: 5px; text-align: left; white-space: pre; min-height: 40px; }
+        .global-log-card { background-color: #1a0a2b; color: #f0f; }
+        .canvas-wrapper canvas { max-width: 100%; height: auto; display: block; border: 1px solid #eee; }
+    </style>
+    <script src="dct.js"></script>
+    <script src="kdtree.js"></script>
+    <script src="ui.js"></script>
+    <script src="hotloop.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+</head>
+<body>
+    <h1>Professional DCT Compression Visualizer</h1>
+    <div id="controls"></div>
+    <div id="pipeline-container"></div>
+
+<script>
+// This script is now only for setup, configuration, and event handling.
+const p5_instance = new p5(p => {
+    // --- Centralized Constants ---
+    const PANEL_SIZE = 256;
+    const NUM_WORKERS = navigator.hardwareConcurrency || 4;
+    
+    let workers = [];
+    let readyWorkers = 0;
+    let uiControls = {};
+
+    let appState = { 
+        video: null, staticRefImage: null, manualKeyframe: null, tracerImage: null,
+        canvases: {}, 
+        constants: { PANEL_SIZE, NUM_WORKERS }, // Make constants available to hotloop
+        needsRefRecompute: true, refCoeffsGrid: [], kdTree: null,
+        lastProcW: -1, lastProcH: -1, isComputing: false, lastFrameDecisions: [],
+        toggles: { inputs: true, ref: true, diff: true, postprocess: true, viz: true },
+        emaMin: -2.0, emaMax: 1.0, lastLoopEndTime: 0, lastLoopTotalTime: 0
+    };
+
+    p.setup = () => {
+        p.noCanvas();
+        
+        // Define UI Configuration
+        const controlsConfig = [
+            {id: 'scheduler', label: 'Scheduler (REF)', type: 'select', options: ['Previous Frame', 'Static Image', 'Manual Keyframe', 'Tracer']},
+            {id: 'blockSize', label: 'Block Size', type: 'slider', min: 4, max: 32, default: 8, step: 4},
+            {id: 'resolution', label: 'Resolution', type: 'slider', min: 0.25, max: 1.0, default: 0.5, step: 0.05},
+            {id: 'interpolation', label: 'Interpolation (n)', type: 'slider', min: 0, max: 1, default: 0.5, step: 0.01},
+            {id: 'similarityThresh', label: 'Similarity Thresh', type: 'slider', min: -3, max: 1.5, default: -1.0, step: 0.1},
+            {id: 'adaptiveRange', label: 'Adaptive Range', type: 'checkbox', default: false},
+            {id: 'emaAlpha', label: 'EMA Alpha', type: 'slider', min: 0.01, max: 0.5, default: 0.1, step: 0.01},
+            {id: 'oscPeriod', label: 'Oscillator Period', type: 'slider', min: 0.1, max: 10, default: 4, step: 0.1},
+            {id: 'skewStrength', label: 'Skew Strength', type: 'slider', min: 0, max: 2.0, default: 0.5, step: 0.05},
+            {id: 'topKTiles', label: 'Top Tiles (k)', type: 'slider', min: 1, max: 16, default: 4, step: 1}
+        ];
+        const modulesConfig = [
+            {id: 'global', title: 'Global Profiling', hasCanvas: false, isGlobal: true},
+            {id: 'inputs', title: 'Inputs', toggleId: 'inputs', hasCanvas: true},
+            {id: 'ref', title: 'Reference', toggleId: 'ref', hasCanvas: true},
+            {id: 'diff', title: 'Search Similarity', toggleId: 'diff', hasCanvas: true},
+            {id: 'postprocess', title: 'Summer Output', toggleId: 'postprocess', hasCanvas: true},
+            {id: 'viz', title: 'Top Source Tiles', toggleId: 'viz', hasCanvas: true}
+        ];
+        
+        controlsConfig.forEach(c => createControlGroup(p, c, uiControls));
+        modulesConfig.forEach(c => createModule(p, c, appState));
+        uiControls.scheduler.changed(()=>appState.needsRefRecompute=true);
+        uiControls.blockSize.changed(()=>appState.needsRefRecompute=true);
+        
+        // Create initial canvases.
+        appState.canvases = {
+            inputs: p.createGraphics(1, 1).parent('panel-inputs'),
+            ref: p.createGraphics(1, 1).parent('panel-ref'),
+            diff: p.createGraphics(1, 1).parent('panel-diff'),
+            postprocess: p.createGraphics(1, 1).parent('panel-postprocess'),
+            viz: p.createGraphics(PANEL_SIZE, PANEL_SIZE).parent('panel-viz')
+        };
+        
+        console.log(`Initializing ${NUM_WORKERS} workers...`);
+        for (let i = 0; i < NUM_WORKERS; i++) {
+            const worker = new Worker('worker.js');
+            worker.addEventListener('message', (e) => {
+                if (e.data.status === 'ready') {
+                    readyWorkers++;
+                    console.log(`Worker ${i + 1}/${NUM_WORKERS} is ready.`);
+                    if (readyWorkers === NUM_WORKERS) {
+                        console.log("All workers are ready. Starting computation loop.");
+                        runComputationLoop(p, appState, uiControls, workers);
+                    }
+                }
+            });
+            workers.push(worker);
+        }
+
+        appState.video=p.createCapture(p.VIDEO, ()=>console.log("Webcam ready."));
+        appState.video.size(PANEL_SIZE,PANEL_SIZE); appState.video.hide();
+        appState.staticRefImage = p.createGraphics(PANEL_SIZE, PANEL_SIZE);
+        appState.manualKeyframe = p.createGraphics(PANEL_SIZE, PANEL_SIZE);
+        appState.tracerImage = p.createGraphics(PANEL_SIZE, PANEL_SIZE);
+    };
+
+    p.draw = () => {
+        if(uiControls.similarityThresh) {
+            const sliderEl=uiControls.similarityThresh.elt;
+            if(uiControls.adaptiveRange.checked()){sliderEl.min=appState.emaMin;sliderEl.max=appState.emaMax;}else{sliderEl.min=-3;sliderEl.max=1.5;}
+        }
+    };
+
+    p.keyPressed = () => { 
+        if (p.key.toLowerCase()==='c') { 
+            appState.manualKeyframe.image(appState.video,0,0,PANEL_SIZE,PANEL_SIZE); 
+            uiControls.scheduler.selected('Manual Keyframe'); 
+            appState.needsRefRecompute=true; 
+            console.log("Keyframe captured."); 
+        } 
+    };
+});
+</script>
+</body>
+</html>

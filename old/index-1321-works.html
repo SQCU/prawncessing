@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Professional DCT Visualizer</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f0f0f0; color: #333; display: flex; flex-direction: column; align-items: center; margin: 0; padding: 20px; }
+        h1 { margin-bottom: 20px; }
+        #controls { background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: flex; flex-wrap: wrap; gap: 20px 40px; margin-bottom: 20px; align-items: center; justify-content: center; }
+        .control-group { display: flex; flex-direction: column; align-items: center; }
+        #perf-log { font-family: monospace; background-color: #222; color: #0f0; padding: 15px; border-radius: 5px; margin-bottom: 20px; min-width: 500px; text-align: left; }
+        #main-canvas-container { border: 1px solid #ccc; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        label { font-weight: bold; margin-bottom: 5px; }
+        .switch { position: relative; display: inline-block; width: 50px; height: 28px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 28px; }
+        .slider:before { position: absolute; content: ""; height: 20px; width: 20px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: #2196F3; }
+        input:checked + .slider:before { transform: translateX(22px); }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+</head>
+<body>
+    <h1>Professional DCT Visualizer</h1>
+    <div id="controls">
+        <div class="control-group"><label>Block Size</label><div id="block-size-control"></div></div>
+        <div class="control-group"><label>Processing Resolution</label><div id="resolution-control"></div></div>
+        <div class="control-group"><label>In-Depth View</label><label class="switch"><input type="checkbox" id="view-toggle"><span class="slider"></span></label></div>
+    </div>
+    <div id="perf-log">Loading...</div>
+    <div id="main-canvas-container"></div>
+
+<script>
+// --- DCT/IDCT Math Library (Minified) ---
+function dct1d(data){const N=data.length,c=new Float32Array(N),t=Math.PI/(2*N);for(let o=0;o<N;o++){let r=0;for(let c=0;c<N;c++)r+=data[c]*Math.cos((2*c+1)*o*t);c[o]=(0===o?Math.sqrt(1/N):Math.sqrt(2/N))*r}return c}function idct1d(data){const N=data.length,c=new Float32Array(N),t=Math.PI/(2*N);for(let o=0;o<N;o++){let r=0;for(let c=0;c<N;c++){r+=(0===c?Math.sqrt(1/N):Math.sqrt(2/N))*data[c]*Math.cos((2*o+1)*c*t)}c[o]=r}return c}function dct2d(data){const N=data.length,c=Array(N).fill(0).map(()=>new Float32Array(N)),t=Array(N).fill(0).map(()=>new Float32Array(N));for(let o=0;o<N;o++)c[o]=dct1d(data[o]);for(let o=0;o<N;o++){const r=c.map(data=>data[o]),d=dct1d(r);for(let c=0;c<N;c++)t[c][o]=d[c]}return t}function idct2d(data){const N=data.length,c=Array(N).fill(0).map(()=>new Float32Array(N)),t=Array(N).fill(0).map(()=>new Float32Array(N));for(let o=0;o<N;o++)c[o]=idct1d(data[o]);for(let o=0;o<N;o++){const r=c.map(data=>data[o]),d=idct1d(r);for(let c=0;c<N;c++)t[c][o]=d[c]}return t}
+
+// --- CONFIGURATION & CONSTANTS ---
+const PANEL_SIZE = 256;
+const GAP = 20;
+
+// --- GLOBAL STATE ---
+let video;
+let preprocessedVideo, dctCanvas, outputCanvas;
+let blockSizeSlider, resolutionSlider, viewToggle;
+let lastProcW = -1, lastProcH = -1;
+
+// ROBUSTNESS: This function validates buffer dimensions and stops execution on mismatch.
+function logAndAssert(bufferName, buffer, expectedW, expectedH) {
+    if (buffer.width !== expectedW || buffer.height !== expectedH) {
+        const message = `FATAL: Dimension mismatch for "${bufferName}". Expected ${expectedW}x${expectedH}, but got ${buffer.width}x${buffer.height}.`;
+        console.error(message);
+        noLoop(); // Stop execution
+        throw new Error(message);
+    }
+    // console.log(`ASSERT OK: ${bufferName} is ${buffer.width}x${buffer.height}`);
+}
+
+function setup() {
+    // A single canvas, its size determined by constants and view mode.
+    createCanvas(PANEL_SIZE * 3 + GAP * 2, PANEL_SIZE + 40).parent('main-canvas-container');
+    
+    // --- Initialize UI ---
+    blockSizeSlider = createSlider(4, 32, 8, 4).parent('block-size-control');
+    resolutionSlider = createSlider(0.25, 1.0, 1.0, 0.05).parent('resolution-control');
+    viewToggle = select('#view-toggle');
+    viewToggle.changed(updateLayout);
+    
+    // --- Initialize Video Source ---
+    video = createCapture(VIDEO, () => console.log("Webcam ready."));
+    video.size(PANEL_SIZE, PANEL_SIZE);
+    video.hide();
+    
+    updateLayout();
+}
+
+// A single function to manage layout changes.
+function updateLayout() {
+    const isIndepth = viewToggle.checked();
+    const panelCount = isIndepth ? 5 : 3;
+    const newWidth = PANEL_SIZE * panelCount + GAP * (panelCount - 1);
+    resizeCanvas(newWidth, PANEL_SIZE + 40); // +40 for label padding
+}
+
+// The single, authoritative draw loop.
+function draw() {
+    if (video.width === 0) return; // Wait for webcam
+
+    // --- (A) GET DATA & PARAMETERS ---
+    const frameStartTime = performance.now();
+    let totalDctTime = 0, totalIdctTime = 0;
+    const currentBlockSize = blockSizeSlider.value();
+    const currentScale = resolutionSlider.value();
+    const procW = floor(PANEL_SIZE * currentScale);
+    const procH = floor(PANEL_SIZE * currentScale);
+
+    // --- (B) PROCESS DATA ---
+
+    // Re-create buffers ONLY if processing dimensions change.
+    if (procW !== lastProcW || procH !== lastProcH) {
+        preprocessedVideo = createGraphics(procW, procH);
+        dctCanvas = createGraphics(procW, procH);
+        outputCanvas = createGraphics(procW, procH);
+        lastProcW = procW;
+        lastProcH = procH;
+        console.log(`Buffers recreated at ${procW}x${procH}`);
+    }
+    
+    // Create the pre-processed (scaled) image.
+    preprocessedVideo.image(video, 0, 0, procW, procH);
+
+    // ROBUSTNESS: Assert that our buffers are the correct size before processing.
+    logAndAssert('preprocessedVideo', preprocessedVideo, procW, procH);
+    logAndAssert('dctCanvas', dctCanvas, procW, procH);
+    logAndAssert('outputCanvas', outputCanvas, procW, procH);
+
+    // Load pixel arrays for manipulation.
+    preprocessedVideo.loadPixels();
+    dctCanvas.loadPixels();
+    outputCanvas.loadPixels();
+
+    // The main processing loop.
+    for (let y = 0; y < procH; y += currentBlockSize) {
+        for (let x = 0; x < procW; x += currentBlockSize) {
+            const w = min(currentBlockSize, procW - x);
+            const h = min(currentBlockSize, procH - y);
+            if (w !== h || w !== currentBlockSize) continue;
+
+            const block = Array(w).fill(0).map(() => new Float32Array(h));
+            for (let j = 0; j < h; j++) {
+                for (let i = 0; i < w; i++) {
+                    const idx = ((y + j) * procW + (x + i)) * 4;
+                    block[j][i] = (0.299 * preprocessedVideo.pixels[idx] + 0.587 * preprocessedVideo.pixels[idx+1] + 0.114 * preprocessedVideo.pixels[idx+2]) - 128;
+                }
+            }
+            
+            const dctStartTime = performance.now();
+            const coeffs = dct2d(block);
+            totalDctTime += performance.now() - dctStartTime;
+
+            const idctStartTime = performance.now();
+            const reconstructed = idct2d(coeffs);
+            totalIdctTime += performance.now() - idctStartTime;
+            
+            for (let j = 0; j < h; j++) {
+                for (let i = 0; i < w; i++) {
+                    const dctVal = log(abs(coeffs[j][i]) + 1) * 20; 
+                    const reconVal = reconstructed[j][i] + 128;
+                    const canvasIdx = ((y + j) * procW + (x + i)) * 4;
+                    dctCanvas.pixels[canvasIdx] = dctCanvas.pixels[canvasIdx+1] = dctCanvas.pixels[canvasIdx+2] = dctVal;
+                    dctCanvas.pixels[canvasIdx+3] = 255;
+                    outputCanvas.pixels[canvasIdx] = outputCanvas.pixels[canvasIdx+1] = outputCanvas.pixels[canvasIdx+2] = reconVal;
+                    outputCanvas.pixels[canvasIdx+3] = 255;
+                }
+            }
+        }
+    }
+    
+    dctCanvas.updatePixels();
+    outputCanvas.updatePixels();
+    
+    // --- (C) LOG STATISTICS ---
+    document.getElementById('perf-log').innerHTML = `Frame Time: ${(performance.now() - frameStartTime).toFixed(1)} ms | DCT Time: ${totalDctTime.toFixed(1)} ms | Block: ${currentBlockSize}x${currentBlockSize} | Res: ${procW}x${procH}`;
+    
+    // --- (D) DISPLAY DATA ---
+    background('#f0f0f0');
+    
+    // FIX: Define panel positions dynamically.
+    let xOffset = 0;
+    const drawPanel = (label, buffer) => {
+        if (buffer) {
+            // FIX: This single image() call correctly draws the buffer into its designated region. No duplication.
+            image(buffer, xOffset, 0, PANEL_SIZE, PANEL_SIZE);
+            fill(51);
+            noStroke();
+            textAlign(CENTER);
+            text(label, xOffset + PANEL_SIZE / 2, PANEL_SIZE + 20);
+            xOffset += PANEL_SIZE + GAP;
+        }
+    };
+
+    if (viewToggle.checked()) {
+        drawPanel('Raw Input', video);
+        drawPanel('Preprocessed', preprocessedVideo);
+        drawPanel('DCT Coeffs', dctCanvas);
+        // Placeholder for IDCT Coeffs
+        fill(50, 50, 80);
+        rect(xOffset, 0, PANEL_SIZE, PANEL_SIZE);
+        fill(255);
+        text('IDCT Coeffs\n(Not Implemented)', xOffset + PANEL_SIZE/2, PANEL_SIZE/2);
+        xOffset += PANEL_SIZE + GAP;
+        drawPanel('Reconstructed', outputCanvas);
+    } else {
+        drawPanel('Input to DCT', preprocessedVideo);
+        drawPanel('DCT Coeffs', dctCanvas);
+        drawPanel('Reconstructed', outputCanvas);
+    }
+}
+</script>
+</body>
+</html>

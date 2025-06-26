@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>P5 Graphics Update Test - CORRECTED</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+</head>
+<body>
+    <h1>P5 Graphics Update Test - Corrected Method</h1>
+    <p>This shows the correct way: draw to an off-screen buffer (p5.Graphics), then draw that buffer to the main canvas using image().</p>
+    <script>
+        let pg; // Our off-screen buffer
+
+        function setup() {
+            // Create ONE main canvas. This is the only thing visible in the DOM.
+            createCanvas(100, 100).style('border', '2px solid red');
+            
+            // Create the off-screen graphics buffer. Do NOT parent it.
+            pg = createGraphics(100, 100);
+        }
+
+        function draw() {
+            // 1. Perform all drawing operations on the off-screen buffer.
+            // This will correctly show the red background and updating frame count.
+            pg.background(255, 0, 0); 
+            pg.fill(255);
+            pg.textSize(12);
+            pg.textAlign(CENTER, CENTER);
+            pg.text('I am updating!', 50, 40);
+            pg.text(`Frame: ${frameCount}`, 50, 60);
+
+            // 2. In the main draw loop, paint the finished buffer onto the main canvas.
+            image(pg, 0, 0);
+        }
+    </script>
+</body>
+</html>

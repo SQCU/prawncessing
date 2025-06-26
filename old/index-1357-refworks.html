@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Professional DCT Compression Visualizer</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f0f0f0; color: #333; display: flex; flex-direction: column; align-items: center; margin: 0; padding: 20px; }
+        h1 { margin-bottom: 20px; }
+        #controls { background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: flex; flex-wrap: wrap; gap: 20px 30px; margin-bottom: 20px; align-items: center; justify-content: center; }
+        .control-group { display: flex; flex-direction: column; align-items: center; }
+        #perf-log { font-family: monospace; background-color: #222; color: #0f0; padding: 15px; border-radius: 5px; margin-bottom: 20px; min-width: 500px; text-align: left; white-space: pre; }
+        #main-canvas-container { border: 1px solid #ccc; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        label { font-weight: bold; margin-bottom: 5px; }
+        select, input[type="range"] { width: 120px; }
+        .switch { position: relative; display: inline-block; width: 50px; height: 28px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 28px; }
+        .slider:before { position: absolute; content: ""; height: 20px; width: 20px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: #2196F3; }
+        input:checked + .slider:before { transform: translateX(22px); }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+</head>
+<body>
+    <h1>Professional DCT Compression Visualizer</h1>
+    <div id="controls">
+        <div class="control-group"><label>Scheduler (REF)</label><div id="scheduler-control"></div></div>
+        <div class="control-group"><label>Block Size</label><div id="block-size-control"></div></div>
+        <div class="control-group"><label>Resolution</label><div id="resolution-control"></div></div>
+        <div class="control-group"><label>Search (k)</label><div id="k-control"></div></div>
+        <div class="control-group"><label>Interpolation (n)</label><div id="n-control"></div></div>
+        <div class="control-group"><label>In-Depth View</label><label class="switch"><input type="checkbox" id="view-toggle"><span class="slider"></span></label></div>
+    </div>
+    <div id="perf-log">Loading...</div>
+    <div id="main-canvas-container"></div>
+
+<script>
+// --- DCT/IDCT Math Library (Minified) ---
+function dct1d(data){const N=data.length,c=new Float32Array(N),t=Math.PI/(2*N);for(let o=0;o<N;o++){let r=0;for(let c=0;c<N;c++)r+=data[c]*Math.cos((2*c+1)*o*t);c[o]=(0===o?Math.sqrt(1/N):Math.sqrt(2/N))*r}return c}function idct1d(data){const N=data.length,c=new Float32Array(N),t=Math.PI/(2*N);for(let o=0;o<N;o++){let r=0;for(let c=0;c<N;c++){r+=(0===c?Math.sqrt(1/N):Math.sqrt(2/N))*data[c]*Math.cos((2*o+1)*c*t)}c[o]=r}return c}function dct2d(data){const N=data.length,c=Array(N).fill(0).map(()=>new Float32Array(N)),t=Array(N).fill(0).map(()=>new Float32Array(N));for(let o=0;o<N;o++)c[o]=dct1d(data[o]);for(let o=0;o<N;o++){const r=c.map(data=>data[o]),d=dct1d(r);for(let c=0;c<N;c++)t[c][o]=d[c]}return t}function idct2d(data){const N=data.length,c=Array(N).fill(0).map(()=>new Float32Array(N)),t=Array(N).fill(0).map(()=>new Float32Array(N));for(let o=0;o<N;o++)c[o]=idct1d(data[o]);for(let o=0;o<N;o++){const r=c.map(data=>data[o]),d=idct1d(r);for(let c=0;c<N;c++)t[c][o]=d[c]}return t}
+
+const PANEL_SIZE = 256;
+const GAP = 20;
+
+let video, staticRefImage, manualKeyframe;
+let preprocessedVideo, refFrame, diffCanvas, outputCanvas;
+let blockSizeSlider, resolutionSlider, scheduler, kSlider, nSlider, viewToggle;
+let lastProcW = -1, lastProcH = -1;
+let refCoeffsGrid = [];
+let needsRefRecompute = true; // PERFORMANCE FIX: Flag to control expensive computations.
+
+function logAndAssert(bufferName, buffer, expectedW, expectedH) { if (!buffer || buffer.width !== expectedW || buffer.height !== expectedH) { const msg = `FATAL: ${bufferName} dim mismatch. Expected ${expectedW}x${expectedH}, got ${buffer ? buffer.width + 'x' + buffer.height : 'null'}.`; console.error(msg); noLoop(); throw new Error(msg); } }
+function createPlaceholderImage(size) { let pg = createGraphics(size, size); pg.background(100); pg.stroke(200); pg.strokeWeight(2); pg.noFill(); pg.ellipse(size/2, size/2, size*0.8, size*0.8); pg.line(0, size/2, size, size/2); pg.line(size/2, 0, size/2, size); return pg; }
+function getBlock(sourceBuffer, x, y, w, h) { const block = Array(h).fill(0).map(() => new Float32Array(w)); for (let j=0; j<h; j++) { for (let i=0; i<w; i++) { const idx = ((y+j)*sourceBuffer.width+(x+i))*4; block[j][i] = (0.299*sourceBuffer.pixels[idx]+0.587*sourceBuffer.pixels[idx+1]+0.114*sourceBuffer.pixels[idx+2])-128; } } return block; }
+
+function precomputeRefDCTs(ref, blockSize) {
+    if (!needsRefRecompute) return; // Don't recompute if not needed.
+    console.log("Recomputing reference DCTs...");
+    ref.loadPixels();
+    const gridW = floor(ref.width / blockSize);
+    const gridH = floor(ref.height / blockSize);
+    refCoeffsGrid = Array(gridH).fill(0).map(() => Array(gridW).fill(0));
+    for (let gy=0; gy<gridH; gy++) { for (let gx=0; gx<gridW; gx++) { const block=getBlock(ref, gx*blockSize, gy*blockSize, blockSize, blockSize); refCoeffsGrid[gy][gx]={x:gx, y:gy, coeffs:dct2d(block)}; } }
+    needsRefRecompute = false; // Mark as computed.
+}
+
+function findBestMatches(targetCoeffs, k) { const blockSize=targetCoeffs.length; let matches=[]; for(const row of refCoeffsGrid){for(const ref of row){let sad=0; for(let j=0;j<blockSize;j++){for(let i=0;i<blockSize;i++){sad+=abs(targetCoeffs[j][i]-ref.coeffs[j][i]);}} matches.push({score:sad,...ref});}} matches.sort((a,b)=>a.score-b.score); return matches.slice(0,k); }
+
+function setup() {
+    createCanvas(PANEL_SIZE * 4 + GAP * 3, PANEL_SIZE + 40).parent('main-canvas-container');
+    staticRefImage = createPlaceholderImage(PANEL_SIZE);
+    manualKeyframe = createPlaceholderImage(PANEL_SIZE);
+    scheduler = createSelect().parent('scheduler-control').changed(() => { needsRefRecompute = true; });
+    scheduler.option('Previous Frame'); scheduler.option('Static Image'); scheduler.option('Manual Keyframe');
+    blockSizeSlider = createSlider(4, 32, 8, 4).parent('block-size-control').changed(() => { needsRefRecompute = true; });
+    resolutionSlider = createSlider(0.25, 1.0, 1.0, 0.05).parent('resolution-control');
+    kSlider = createSlider(1, 16, 1, 1).parent('k-control');
+    nSlider = createSlider(0, 1, 0.5, 0.01).parent('n-control');
+    viewToggle = select('#view-toggle').changed(updateLayout);
+    video = createCapture(VIDEO, () => console.log("Webcam ready."));
+    video.size(PANEL_SIZE, PANEL_SIZE);
+    video.hide();
+    updateLayout();
+}
+
+function updateLayout() { const isIndepth=viewToggle.checked(); const panelCount=isIndepth ? 5:4; resizeCanvas(PANEL_SIZE*panelCount+GAP*(panelCount-1), PANEL_SIZE+40); }
+
+function keyPressed() { if (key.toLowerCase()==='c') { manualKeyframe.image(video, 0, 0, manualKeyframe.width, manualKeyframe.height); scheduler.selected('Manual Keyframe'); needsRefRecompute = true; console.log("Keyframe captured."); } }
+
+function draw() {
+    if (video.width === 0) return;
+
+    const frameStartTime = performance.now();
+    const currentBlockSize = blockSizeSlider.value();
+    const currentScale = resolutionSlider.value();
+    const kValue = kSlider.value();
+    const nValue = nSlider.value();
+    const procW = floor(PANEL_SIZE * currentScale);
+    const procH = floor(PANEL_SIZE * currentScale);
+
+    if (procW !== lastProcW || procH !== lastProcH) {
+        preprocessedVideo=createGraphics(procW, procH); refFrame=createGraphics(procW, procH); diffCanvas=createGraphics(procW, procH); outputCanvas=createGraphics(procW, procH);
+        lastProcW=procW; lastProcH=procH; needsRefRecompute = true;
+    }
+    
+    preprocessedVideo.image(video, 0, 0, procW, procH);
+    
+    const schedulerMode = scheduler.value();
+    if (schedulerMode === 'Previous Frame') needsRefRecompute = true;
+    switch(schedulerMode) {
+        case 'Previous Frame': if (outputCanvas.width > 0) refFrame.image(outputCanvas, 0, 0, procW, procH); else refFrame.image(staticRefImage, 0, 0, procW, procH); break;
+        case 'Static Image': refFrame.image(staticRefImage, 0, 0, procW, procH); break;
+        case 'Manual Keyframe': refFrame.image(manualKeyframe, 0, 0, procW, procH); break;
+    }
+    
+    logAndAssert('preprocessedVideo', preprocessedVideo, procW, procH);
+    logAndAssert('refFrame', refFrame, procW, procH);
+
+    precomputeRefDCTs(refFrame, currentBlockSize);
+    
+    preprocessedVideo.loadPixels();
+    outputCanvas.loadPixels();
+
+    let searchVisBlock = null;
+    let highlightRect = null;
+    let baseOffset = viewToggle.checked() ? PANEL_SIZE + GAP : 0;
+    if (mouseIsPressed && mouseX > baseOffset && mouseX < baseOffset + PANEL_SIZE && mouseY < PANEL_SIZE) {
+        highlightRect = {
+            x: floor((mouseX - baseOffset) / (currentBlockSize * (PANEL_SIZE / procW))) * currentBlockSize,
+            y: floor(mouseY / (currentBlockSize * (PANEL_SIZE / procH))) * currentBlockSize,
+            w: currentBlockSize, h: currentBlockSize
+        };
+    }
+    
+    for (let y = 0; y < procH; y += currentBlockSize) {
+        for (let x = 0; x < procW; x += currentBlockSize) {
+            if (x + currentBlockSize > procW || y + currentBlockSize > procH) continue;
+            const blockIMG = getBlock(preprocessedVideo, x, y, currentBlockSize, currentBlockSize);
+            const coeffsIMG = dct2d(blockIMG);
+            const bestMatches = findBestMatches(coeffsIMG, kValue);
+            if (!bestMatches || bestMatches.length === 0) continue;
+            const bestMatch = bestMatches[0];
+            const coeffsRECON = Array(currentBlockSize).fill(0).map(()=>new Float32Array(currentBlockSize));
+            for (let j=0; j<currentBlockSize; j++){ for (let i=0; i<currentBlockSize; i++){ coeffsRECON[j][i] = (1-nValue)*coeffsIMG[j][i] + nValue*bestMatch.coeffs[j][i]; } }
+            const reconstructed = idct2d(coeffsRECON);
+            for (let j=0; j<currentBlockSize; j++) { for (let i=0; i<currentBlockSize; i++) { const reconVal=reconstructed[j][i]+128; const canvasIdx=((y+j)*procW+(x+i))*4; outputCanvas.pixels[canvasIdx]=outputCanvas.pixels[canvasIdx+1]=outputCanvas.pixels[canvasIdx+2]=reconVal; outputCanvas.pixels[canvasIdx+3]=255; } }
+            if (highlightRect && x === highlightRect.x && y === highlightRect.y) { searchVisBlock = bestMatches; }
+        }
+    }
+    outputCanvas.updatePixels();
+
+    diffCanvas.background(10); // Clear similarity view
+    if (searchVisBlock) {
+        let maxScore = searchVisBlock.reduce((max, m) => Math.max(max, m.score), 0) || 1;
+        diffCanvas.loadPixels();
+        for (const match of searchVisBlock) { const val=map(match.score, 0, maxScore, 255, 10); for (let j=0; j<currentBlockSize; j++) { for (let i=0; i<currentBlockSize; i++) { const canvasIdx=((match.y*currentBlockSize+j)*procW+(match.x*currentBlockSize+i))*4; diffCanvas.pixels[canvasIdx]=diffCanvas.pixels[canvasIdx+1]=diffCanvas.pixels[canvasIdx+2]=val; diffCanvas.pixels[canvasIdx+3]=255; } } }
+        diffCanvas.updatePixels();
+    }
+    
+    document.getElementById('perf-log').innerHTML = `Frame Time: ${(performance.now() - frameStartTime).toFixed(1)} ms | k: ${kValue} | n: ${nValue.toFixed(2)} | Block: ${currentBlockSize}x${currentBlockSize} | Res: ${procW}x${procH}`;
+    
+    background('#f0f0f0');
+    
+    let xOffset = 0; // BUG FIX: Declare xOffset before it is used.
+    const drawPanel = (label, buffer, highlight) => {
+        if (buffer) {
+            image(buffer, xOffset, 0, PANEL_SIZE, PANEL_SIZE);
+            if(highlight){ noFill(); stroke(255,255,0); strokeWeight(2); rect(xOffset+highlight.x*(PANEL_SIZE/procW), highlight.y*(PANEL_SIZE/procH), highlight.w*(PANEL_SIZE/procW), highlight.h*(PANEL_SIZE/procH)); }
+            fill(51); noStroke(); textAlign(CENTER);
+            text(label, xOffset + PANEL_SIZE/2, PANEL_SIZE+20);
+            xOffset += PANEL_SIZE + GAP;
+        }
+    };
+
+    if (viewToggle.checked()) {
+        drawPanel('Raw Input', video);
+        drawPanel('Input (IMG)', preprocessedVideo, highlightRect);
+        drawPanel('Reference (REF)', refFrame);
+        drawPanel('Search Similarity', diffCanvas);
+        drawPanel('Summer Output', outputCanvas);
+    } else {
+        drawPanel('Input (IMG)', preprocessedVideo, highlightRect);
+        drawPanel('Reference (REF)', refFrame);
+        drawPanel('Search Similarity', diffCanvas);
+        drawPanel('Summer Output', outputCanvas);
+    }
+}
+</script>
+</body>
+</html>

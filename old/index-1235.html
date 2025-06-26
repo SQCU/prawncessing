@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>p5.js DCT Performance Visualizer</title>
+    <style>
+        body { 
+            font-family: sans-serif; 
+            background-color: #f0f0f0; 
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+        }
+        #controls {
+            background-color: white;
+            padding: 15px 25px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            display: flex;
+            gap: 40px;
+            margin-bottom: 20px;
+        }
+        #perf-log {
+            font-family: monospace;
+            background-color: #222;
+            color: #0f0;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            min-width: 400px;
+            text-align: left;
+        }
+        .canvas-container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 20px;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.min.js"></script>
+    <script>
+// p5.js sketch - FINAL ROBUST VERSION
+
+const CANVAS_W = 256;
+const CANVAS_H = 256;
+const GAP = 20;
+
+let video;
+let dctCanvas, outputCanvas;
+
+// --- UI Elements & State ---
+let blockSizeSlider, resolutionSlider;
+let perfLogElement;
+let lastProcW = -1, lastProcH = -1; // State variables to track size changes
+
+// --- DCT/IDCT Math Library (Unchanged) ---
+function dct1d(data){const N=data.length,c=new Float32Array(N),t=Math.PI/(2*N);for(let o=0;o<N;o++){let r=0;for(let c=0;c<N;c++)r+=data[c]*Math.cos((2*c+1)*o*t);c[o]=(0===o?Math.sqrt(1/N):Math.sqrt(2/N))*r}return c}function idct1d(data){const N=data.length,c=new Float32Array(N),t=Math.PI/(2*N);for(let o=0;o<N;o++){let r=0;for(let c=0;c<N;c++){r+=(0===c?Math.sqrt(1/N):Math.sqrt(2/N))*data[c]*Math.cos((2*o+1)*c*t)}c[o]=r}return c}function dct2d(data){const N=data.length,c=Array(N).fill(0).map(()=>new Float32Array(N)),t=Array(N).fill(0).map(()=>new Float32Array(N));for(let o=0;o<N;o++)c[o]=dct1d(data[o]);for(let o=0;o<N;o++){const r=c.map(data=>data[o]),d=dct1d(r);for(let c=0;c<N;c++)t[c][o]=d[c]}return t}function idct2d(data){const N=data.length,c=Array(N).fill(0).map(()=>new Float32Array(N)),t=Array(N).fill(0).map(()=>new Float32Array(N));for(let o=0;o<N;o++)c[o]=idct1d(data[o]);for(let o=0;o<N;o++){const r=c.map(data=>data[o]),d=idct1d(r);for(let c=0;c<N;c++)t[c][o]=d[c]}return t}
+
+function setup() {
+    let mainCanvas = createCanvas(CANVAS_W * 3 + GAP * 2, CANVAS_H + 20);
+    mainCanvas.parent('canvas-container');
+    
+    video = createCapture(VIDEO);
+    video.size(CANVAS_W, CANVAS_H);
+    video.hide();
+    
+    blockSizeSlider = createSlider(4, 32, 8, 4);
+    blockSizeSlider.parent('block-size-control');
+
+    resolutionSlider = createSlider(0.25, 1.0, 1.0, 0.05);
+    resolutionSlider.parent('resolution-control');
+    
+    perfLogElement = select('#perf-log');
+    
+    console.log("Setup complete. Loop is running.");
+}
+
+function draw() {
+    if (video.width === 0) return;
+    
+    const frameStartTime = performance.now();
+    let totalDctTime = 0, totalIdctTime = 0;
+
+    const currentBlockSize = blockSizeSlider.value();
+    const currentScale = resolutionSlider.value();
+    const procW = floor(CANVAS_W * currentScale);
+    const procH = floor(CANVAS_H * currentScale);
+
+    // --- THE FIX: Re-create buffers if the size has changed ---
+    if (procW !== lastProcW || procH !== lastProcH) {
+        dctCanvas = createGraphics(procW, procH);
+        outputCanvas = createGraphics(procW, procH);
+        lastProcW = procW;
+        lastProcH = procH;
+        console.log(`Recreated buffers at ${procW}x${procH}`);
+    }
+
+    // Now we can safely load pixels from our correctly-sized buffers
+    dctCanvas.loadPixels();
+    outputCanvas.loadPixels();
+    
+    // We get pixel data directly from the video for processing
+    video.loadPixels();
+
+    // Process block by block over the TARGET processing dimensions
+    for (let y = 0; y < procH; y += currentBlockSize) {
+        for (let x = 0; x < procW; x += currentBlockSize) {
+            
+            const w = min(currentBlockSize, procW - x);
+            const h = min(currentBlockSize, procH - y);
+            if (w !== h || w !== currentBlockSize) continue;
+
+            const block = Array(w).fill(0).map(() => new Float32Array(h));
+            for (let j = 0; j < h; j++) {
+                for (let i = 0; i < w; i++) {
+                    // Map processing coordinates to source video coordinates
+                    const srcX = floor(map(x + i, 0, procW, 0, video.width));
+                    const srcY = floor(map(y + j, 0, procH, 0, video.height));
+                    const idx = (srcY * video.width + srcX) * 4;
+                    
+                    const r = video.pixels[idx];
+                    const g = video.pixels[idx + 1];
+                    const b = video.pixels[idx + 2];
+                    block[j][i] = (0.299 * r + 0.587 * g + 0.114 * b) - 128;
+                }
+            }
+            
+            const dctStartTime = performance.now();
+            const coeffs = dct2d(block);
+            totalDctTime += performance.now() - dctStartTime;
+
+            const idctStartTime = performance.now();
+            const reconstructed = idct2d(coeffs);
+            totalIdctTime += performance.now() - idctStartTime;
+            
+            // Write to the output canvases. The math is simple now because sizes match.
+            for (let j = 0; j < h; j++) {
+                for (let i = 0; i < w; i++) {
+                    const dctVal = log(abs(coeffs[j][i]) + 1) * 20; 
+                    const reconVal = reconstructed[j][i] + 128;
+                    const canvasIdx = ((y + j) * procW + (x + i)) * 4;
+
+                    dctCanvas.pixels[canvasIdx] = dctVal;
+                    dctCanvas.pixels[canvasIdx + 1] = dctVal;
+                    dctCanvas.pixels[canvasIdx + 2] = dctVal;
+                    dctCanvas.pixels[canvasIdx + 3] = 255;
+                    
+                    outputCanvas.pixels[canvasIdx] = reconVal;
+                    outputCanvas.pixels[canvasIdx + 1] = reconVal;
+                    outputCanvas.pixels[canvasIdx + 2] = reconVal;
+                    outputCanvas.pixels[canvasIdx + 3] = 255;
+                }
+            }
+        }
+    }
+    
+    dctCanvas.updatePixels();
+    outputCanvas.updatePixels();
+
+    const totalFrameTime = performance.now() - frameStartTime;
+
+    perfLogElement.html(
+      `Frame Time   : ${totalFrameTime.toFixed(2)} ms<br>` +
+      `DCT Time (JS): ${totalDctTime.toFixed(2)} ms<br>` +
+      `IDCT Time (JS): ${totalIdctTime.toFixed(2)} ms<br>` +
+      `---<br>`+
+      `Block Size   : ${currentBlockSize}x${currentBlockSize}<br>`+
+      `Resolution   : ${procW}x${procH} (${(currentScale*100).toFixed(0)}%)`
+    );
+
+    background(240);
+    image(video, 0, 0);
+    // Draw our (possibly smaller) processed canvases, scaling them up to fit the display area
+    image(dctCanvas, CANVAS_W + GAP, 0, CANVAS_W, CANVAS_H);
+    image(outputCanvas, (CANVAS_W + GAP) * 2, 0, CANVAS_W, CANVAS_H);
+
+    fill(0);
+    noStroke();
+    textAlign(CENTER);
+    text('1. Input (Webcam)', CANVAS_W / 2, CANVAS_H + 15);
+    text('2. DCT Coefficients', CANVAS_W + GAP + CANVAS_W / 2, CANVAS_H + 15);
+    text('3. Reconstructed (IDCT)', (CANVAS_W + GAP) * 2 + CANVAS_W / 2, CANVAS_H + 15);
+}
+</script>
+</head>
+<body>
+    <h1>Live DCT Performance Visualizer</h1>
+    <div id="controls">
+        <div>
+            <label>Block Size</label>
+            <div id="block-size-control"></div>
+        </div>
+        <div>
+            <label>Processing Resolution</label>
+            <div id="resolution-control"></div>
+        </div>
+    </div>
+    <div id="perf-log">Loading...</div>
+    <div id="canvas-container"></div>
+</body>
+</html>
