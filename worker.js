@@ -1,6 +1,5 @@
 // worker.js
 
-// --- Worker Initialization: Load libraries from local files ---
 try {
     importScripts('dct.js', 'kdtree.js');
 } catch (e) {
@@ -9,11 +8,9 @@ try {
     throw e;
 }
 
-// --- Worker State ---
-let kdTree = null;
+let treeInstance = null;
 let refCoeffsGrid = null;
 
-// --- Helper Functions (Now using imported DCT) ---
 function getBlockStats(block) { const N=block.length;const size=N*N;let sum=0;for(let j=0;j<N;j++)for(let i=0;i<N;i++)sum+=block[j][i];const mean=sum/size;let sumSqDiff=0;for(let j=0;j<N;j++)for(let i=0;i<N;i++)sumSqDiff+=(block[j][i]-mean)**2;const stdDev=Math.sqrt(sumSqDiff/size);return{mean,stdDev};}
 function normalizedCrossCorrelation(blockA,blockB){const N=blockA[0].length;let totalNcc=0;for(let c=0;c<3;c++){const statsA=getBlockStats(blockA[c]);const statsB=getBlockStats(blockB[c]);const denominator=statsA.stdDev*statsB.stdDev;if(denominator<1e-6){totalNcc+=(statsA.stdDev<1e-6&&statsB.stdDev<1e-6)?1:0;continue;}let crossCorrSum=0;for(let j=0;j<N;j++)for(let i=0;i<N;i++){crossCorrSum+=(blockA[c][j][i]-statsA.mean)*(blockB[c][j][i]-statsB.mean);}totalNcc+=crossCorrSum/(N*N*denominator);}return totalNcc/3;}
 function extractRGBBlock(imageData,x,y,blockSize,width){const block=[Array(blockSize).fill(0).map(()=>new Float32Array(blockSize)),Array(blockSize).fill(0).map(()=>new Float32Array(blockSize)),Array(blockSize).fill(0).map(()=>new Float32Array(blockSize))];for(let j=0;j<blockSize;j++)for(let i=0;i<blockSize;i++){const idx=((y+j)*width+(x+i))*4;block[0][j][i]=imageData[idx]-128;block[1][j][i]=imageData[idx+1]-128;block[2][j][i]=imageData[idx+2]-128;}return block;}
@@ -21,19 +18,17 @@ function computeRGBDCT(rgbBlock){return[dct2d(rgbBlock[0]),dct2d(rgbBlock[1]),dc
 function reconstructRGBBlock(coeffs){return[idct2d(coeffs[0]),idct2d(coeffs[1]),idct2d(coeffs[2])];}
 function flattenCoeffs(coeffs,bs){const dim=bs*bs*3;const flat=new Float32Array(dim);let k=0;for(let c=0;c<3;c++)for(let j=0;j<bs;j++)for(let i=0;i<bs;i++)flat[k++]=coeffs[c][j][i];return flat;}
 
-// --- Main Message Handler ---
 self.onmessage = (e) => {
     const { operation } = e.data;
     if (operation === 'init_tree') {
         const distance = (a, b) => { let d=0; for(let i=0;i<a.length;i++) d+=(a[i]-b[i])**2; return Math.sqrt(d); };
-        kdTree = new self.kdTree([], distance, ['flat']);
-        kdTree.root = e.data.kdTreeJSON.root;
+        treeInstance = new kdTree(e.data.points, distance, ['flat']);
         refCoeffsGrid = e.data.refCoeffsGrid;
         return;
     }
 
     if (operation === 'process_slice') {
-        if (!kdTree || !refCoeffsGrid) { return; }
+        if (!treeInstance || !refCoeffsGrid) { return; }
         const { procW, procH, blockSize, nValue, similarityThreshold, startRow, inputSlice } = e.data;
         const outputPixels = new Uint8ClampedArray(inputSlice.data.length);
         const decisionPlan = []; const allFrameScores = [];
@@ -43,7 +38,7 @@ self.onmessage = (e) => {
                 const blockIMG = extractRGBBlock(inputSlice.data, x, y, blockSize, procW);
                 const coeffsIMG = computeRGBDCT(blockIMG);
                 const flatIMG = flattenCoeffs(coeffsIMG, blockSize);
-                const candidates = kdTree.nearest( { flat: flatIMG }, 5);
+                const candidates = treeInstance.nearest( { flat: flatIMG }, 5);
 
                 let bestMatch = { score: -Infinity, coeffs: null, pos: null };
                 const candidateScores = [];
@@ -64,11 +59,17 @@ self.onmessage = (e) => {
                 allFrameScores.push(normalizedScore);
                 
                 let coeffsRECON; let blockDecision;
-                if (normalizedScore > similarityThreshold) {
+
+                // FINAL FIX: Add a guard to ensure `bestMatch.coeffs` is not null before trying to interpolate.
+                // This makes the condition explicit and prevents the crash.
+                if (normalizedScore > similarityThreshold && bestMatch.coeffs !== null) {
                     blockDecision = 'interpolate';
                     coeffsRECON = [Array(blockSize).fill(0).map(()=>new Float32Array(blockSize)), Array(blockSize).fill(0).map(()=>new Float32Array(blockSize)), Array(blockSize).fill(0).map(()=>new Float32Array(blockSize))];
-                    for(let c=0; c<3; c++) for(let j=0; j<blockSize; j++) for(let i=0; i<blockSize; i++) coeffsRECON[c][j][i] = (1 - nValue) * coeffsIMG[c][j][i] + nValue * bestMatch.coeffs[c][j][i];
+                    for(let c=0; c<3; c++) for(let j=0; j<blockSize; j++) for(let i=0; i<blockSize; i++) {
+                        coeffsRECON[c][j][i] = (1 - nValue) * coeffsIMG[c][j][i] + nValue * bestMatch.coeffs[c][j][i];
+                    }
                 } else {
+                    // Fallback case for low similarity OR for any weird edge case where a best match wasn't found.
                     blockDecision = 'passthrough';
                     coeffsRECON = coeffsIMG;
                 }

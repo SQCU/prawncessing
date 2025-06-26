@@ -11,49 +11,79 @@
         .control-group { display: flex; flex-direction: column; align-items: center; }
         label { font-weight: bold; margin-bottom: 5px; }
         select, input[type="range"] { width: 120px; }
-        #pipeline-container { display: flex; flex-wrap: nowrap; gap: 15px; width: 100%; justify-content: center; align-items: flex-start; overflow-x: auto; padding-bottom: 15px; }
+        #info-card-container { display: flex; flex-wrap: nowrap; gap: 15px; width: 100%; justify-content: center; overflow-x: auto; padding-bottom: 15px; margin-bottom: 20px; }
+        #pipeline-container { width: 100%; display: flex; justify-content: center; }
         .module-container { border: 1px solid #ddd; border-radius: 8px; background: #fff; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); display: flex; flex-direction: column; gap: 10px; min-width: 256px;}
         .module-header { display: flex; justify-content: space-between; align-items: center; font-weight: bold; }
         .log-card { font-family: monospace; background-color: #222; color: #0f0; padding: 10px; border-radius: 5px; text-align: left; white-space: pre; min-height: 40px; }
         .global-log-card { background-color: #1a0a2b; color: #f0f; }
-        .canvas-wrapper canvas { max-width: 100%; height: auto; display: block; border: 1px solid #eee; }
     </style>
+    <!-- FIX: The p5.js library MUST be loaded before any scripts that use it. -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
     <script src="dct.js"></script>
     <script src="kdtree.js"></script>
     <script src="ui.js"></script>
     <script src="hotloop.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <script src="diagnostics.js"></script>
 </head>
 <body>
     <h1>Professional DCT Compression Visualizer</h1>
     <div id="controls"></div>
+    <div id="diagnostics-controls" style="margin-top: 10px; padding: 10px; background-color: #fff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: flex; gap: 10px;">
+        <button id="start-log">Start Logging</button>
+        <button id="capture-frame" disabled>Capture Frame</button>
+        <button id="stop-log" disabled>Stop & Download</button>
+    </div>
+    <div id="info-card-container"></div>
     <div id="pipeline-container"></div>
 
 <script>
-// This script is now only for setup, configuration, and event handling.
 const p5_instance = new p5(p => {
     // --- Centralized Constants ---
     const PANEL_SIZE = 256;
+    const PANEL_GAP = 15;
     const NUM_WORKERS = navigator.hardwareConcurrency || 4;
     
     let workers = [];
     let readyWorkers = 0;
     let uiControls = {};
+    let logger = new DiagnosticLogger();
+
+    const modulesConfig = [
+        {id: 'inputs', title: 'Inputs', toggleId: 'inputs'},
+        {id: 'ref', title: 'Reference', toggleId: 'ref'},
+        {id: 'diff', title: 'Search Similarity', toggleId: 'diff'},
+        {id: 'postprocess', title: 'Summer Output', toggleId: 'postprocess'},
+        {id: 'viz', title: 'Top Source Tiles', toggleId: 'viz'}
+    ];
+    const visibleModuleCount = () => modulesConfig.filter(m => appState.toggles[m.toggleId]).length;
 
     let appState = { 
         video: null, staticRefImage: null, manualKeyframe: null, tracerImage: null,
-        canvases: {}, 
+        buffers: {},
         constants: { PANEL_SIZE, NUM_WORKERS },
         needsRefRecompute: true, refCoeffsGrid: [], kdTree: null,
         lastProcW: -1, lastProcH: -1, isComputing: false, lastFrameDecisions: [],
         toggles: { inputs: true, ref: true, diff: true, postprocess: true, viz: true },
-        emaMin: -2.0, emaMax: 1.0, lastLoopEndTime: 0, lastLoopTotalTime: 0
+        emaMin: -2.0, emaMax: 1.0
     };
 
+    async function runSingleFrame() {
+        if (!appState.video || appState.video.width === 0 || appState.isComputing) return;
+        appState.isComputing = true;
+        let frameData = { timers: {} };
+        try {
+            frameData = Pipeline.acquireInputs(p, frameData, appState, uiControls);
+            frameData = Pipeline.computeReferenceCoeffs(p, frameData, appState, uiControls, workers);
+            frameData = await Pipeline.runParallelSearch(frameData, appState, uiControls, workers);
+            frameData = Pipeline.processWorkerResults(frameData, appState, uiControls, workers);
+            frameData = Pipeline.updateVisualizations(p, frameData, appState, uiControls);
+        } finally {
+            appState.isComputing = false;
+        }
+    }
+
     p.setup = () => {
-        p.noCanvas();
-        
-        // --- Define UI Configuration ---
         const controlsConfig = [
             {id: 'scheduler', label: 'Scheduler (REF)', type: 'select', options: ['Previous Frame', 'Static Image', 'Manual Keyframe', 'Tracer']},
             {id: 'blockSize', label: 'Block Size', type: 'slider', min: 4, max: 32, default: 8, step: 4},
@@ -66,49 +96,79 @@ const p5_instance = new p5(p => {
             {id: 'skewStrength', label: 'Skew Strength', type: 'slider', min: 0, max: 2.0, default: 0.5, step: 0.05},
             {id: 'topKTiles', label: 'Top Tiles (k)', type: 'slider', min: 1, max: 16, default: 4, step: 1}
         ];
-        const modulesConfig = [
-            {id: 'global', title: 'Global Profiling', hasCanvas: false, isGlobal: true},
-            {id: 'inputs', title: 'Inputs', toggleId: 'inputs', hasCanvas: true},
-            {id: 'ref', title: 'Reference', toggleId: 'ref', hasCanvas: true},
-            {id: 'diff', title: 'Search Similarity', toggleId: 'diff', hasCanvas: true},
-            {id: 'postprocess', title: 'Summer Output', toggleId: 'postprocess', hasCanvas: true},
-            {id: 'viz', title: 'Top Source Tiles', toggleId: 'viz', hasCanvas: true}
-        ];
         
+        const mainCanvas = p.createCanvas(PANEL_SIZE, PANEL_SIZE).parent('pipeline-container');
+        createModule(p, {id: 'global', title: 'Global Profiling', isGlobal: true}, appState, 'info-card-container');
         controlsConfig.forEach(c => createControlGroup(p, c, uiControls));
-        modulesConfig.forEach(c => createModule(p, c, appState));
-        uiControls.scheduler.changed(()=>appState.needsRefRecompute=true);
-        uiControls.blockSize.changed(()=>appState.needsRefRecompute=true);
+        modulesConfig.forEach(c => createModule(p, c, appState, 'info-card-container'));
         
-        // Initialize p5.js assets
-        appState.video=p.createCapture(p.VIDEO, ()=>console.log("Webcam ready."));
+        uiControls.scheduler.changed(() => appState.needsRefRecompute = true);
+        uiControls.blockSize.changed(() => appState.needsRefRecompute = true);
+        
+        appState.video = p.createCapture(p.VIDEO, ()=>console.log("Webcam ready."));
         appState.video.size(PANEL_SIZE,PANEL_SIZE); appState.video.hide();
         appState.staticRefImage = p.createGraphics(PANEL_SIZE, PANEL_SIZE);
         appState.manualKeyframe = p.createGraphics(PANEL_SIZE, PANEL_SIZE);
         appState.tracerImage = p.createGraphics(PANEL_SIZE, PANEL_SIZE);
         
-        console.log(`Initializing ${NUM_WORKERS} workers...`);
         for (let i = 0; i < NUM_WORKERS; i++) {
             const worker = new Worker('worker.js');
             worker.addEventListener('message', (e) => {
-                if (e.data.status === 'ready') {
-                    readyWorkers++;
-                    console.log(`Worker ${i + 1}/${NUM_WORKERS} is ready.`);
-                    if (readyWorkers === NUM_WORKERS) {
-                        console.log("All workers are ready. Starting computation loop.");
-                        runComputationLoop(p, appState, uiControls, workers);
-                    }
-                }
+                if (e.data.status === 'ready') readyWorkers++;
             });
             workers.push(worker);
         }
+
+        // --- Diagnostics UI Setup ---
+        const startBtn = document.getElementById('start-log');
+        const captureBtn = document.getElementById('capture-frame');
+        const stopBtn = document.getElementById('stop-log');
+
+        startBtn.addEventListener('click', async () => {
+            const jsFiles = ['sketch.js', 'ui.js', 'hotloop.js', 'worker.js', 'dct.js', 'kdtree.js', 'diagnostics.js'];
+            const canvasGetters = () => [
+                appState.buffers.inputs, 
+                appState.buffers.ref, 
+                appState.buffers.diff, 
+                appState.buffers.postprocess, 
+                appState.buffers.viz
+            ].map(b => b ? b.canvas : null);
+
+            await logger.initialize(jsFiles, canvasGetters);
+            startBtn.disabled = true;
+            captureBtn.disabled = false;
+            stopBtn.disabled = false;
+        });
+
+        captureBtn.addEventListener('click', () => logger.captureFrame());
+        stopBtn.addEventListener('click', () => {
+            logger.generateAndDownload();
+            startBtn.disabled = false;
+            captureBtn.disabled = true;
+            stopBtn.disabled = true;
+        });
     };
 
     p.draw = () => {
-        if(uiControls.similarityThresh) {
-            const sliderEl=uiControls.similarityThresh.elt;
-            if(uiControls.adaptiveRange.checked()){sliderEl.min=appState.emaMin;sliderEl.max=appState.emaMax;}else{sliderEl.min=-3;sliderEl.max=1.5;}
+        if (readyWorkers < NUM_WORKERS) {
+            p.background(20); p.fill(255); p.textAlign(p.CENTER, p.CENTER);
+            p.text(`Waiting for workers... ${readyWorkers}/${NUM_WORKERS}`, p.width/2, p.height/2);
+            return;
         }
+
+        runSingleFrame();
+
+        p.background(240);
+        let x_offset = 0;
+        const w = (PANEL_SIZE * visibleModuleCount()) + (PANEL_GAP * (visibleModuleCount() - 1));
+        if (p.width !== w && w > 0) p.resizeCanvas(w, PANEL_SIZE);
+
+        modulesConfig.forEach(m => {
+            if (appState.toggles[m.toggleId] && appState.buffers[m.id]) {
+                p.image(appState.buffers[m.id], x_offset, 0, PANEL_SIZE, PANEL_SIZE);
+                x_offset += PANEL_SIZE + PANEL_GAP;
+            }
+        });
     };
 
     p.keyPressed = () => { 

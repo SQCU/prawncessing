@@ -26,13 +26,15 @@ function createControlGroup(p5, config, controlsRegistry) {
 }
 
 /**
- * Creates a processing module (header, stats card, canvas panel) and appends it to the pipeline.
+ * Creates a module's info card (header, stats) and appends it to the pipeline.
+ * THIS FUNCTION DOES NOT CREATE CANVASES.
  * @param {p5.p5Instance} p5 - The p5.js instance.
  * @param {object} config - Configuration object for the module.
  * @param {object} appState - The main application state object.
+ * @param {string} parentId - The ID of the DOM element to append this card to.
  */
-function createModule(p5, config, appState) {
-    const container = p5.createDiv().addClass('module-container').parent('pipeline-container');
+function createModule(p5, config, appState, parentId) {
+    const container = p5.createDiv().addClass('module-container').parent(parentId);
     const header = p5.createDiv().addClass('module-header').parent(container);
     p5.createSpan(config.title).parent(header);
     if(config.toggleId) {
@@ -40,11 +42,4 @@ function createModule(p5, config, appState) {
         toggle.changed(() => appState.toggles[config.toggleId] = toggle.checked());
     }
     p5.createDiv('').id(`stats-${config.id}`).addClass('log-card' + (config.isGlobal ? ' global-log-card' : '')).parent(container);
-    
-    // FIX: The canvas wrapper div MUST be parented to its own module's container.
-    // The .parent(container) call at the end of this line is the crucial fix.
-    // Without it, the div is created but never attached to the page.
-    if(config.hasCanvas) {
-        p5.createDiv('').id(`panel-${config.id}`).addClass('canvas-wrapper').parent(container);
-    }
 }

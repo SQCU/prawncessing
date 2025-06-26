@@ -163,36 +163,80 @@ function processWorkerResults(frameData, state, uiControls, workers) {
 }
 
 /** STAGE 5: Update all visualization canvases. */
-function updateVisualizations(p5, frameData, state, uiControls) {
+Pipeline.updateVisualizations = function(p5, frameData, state, uiControls) {
     const startTime = performance.now();
-    if (!state.toggles.viz) { frameData.timers.viz = 0; updateStat('viz', 'Disabled'); return frameData; }
+    if (!state.toggles.viz) { updateStat('viz', 'Disabled'); return frameData; }
     
-    const bs=uiControls.blockSize.value();
-    const { diff, inputs, viz, ref } = state.canvases;
-    if(!diff || !inputs || !viz || !ref) return frameData;
-
-    diff.background(0);
-    state.lastFrameDecisions.forEach(d => {
-        const block=inputs.get(d.gx*bs,d.gy*bs,bs,bs);
-        diff.push();
-        if(d.blockDecision==='interpolate') diff.tint(255,127); else diff.filter(p5.INVERT);
-        diff.image(block,d.gx*bs,d.gy*bs,bs,bs);
-        diff.pop();
-    });
-
-    const counts={};
-    state.lastFrameDecisions.forEach(d=>{if(d.blockDecision==='interpolate' && d.refPos){const k=`${d.refPos.x},${d.refPos.y}`;counts[k]=(counts[k]||0)+1;}});
-    const sorted=Object.entries(counts).sort((a,b)=>b[1]-a[1]);
-    viz.background(50);
-    for(let i=0;i<Math.min(uiControls.topKTiles.value(),sorted.length);i++){
-        const[k]=sorted[i];const[rx,ry]=k.split(',').map(Number);
-        const tile=ref.get(rx*bs,ry*bs,bs,bs);
-        viz.image(tile,(i%4)*(state.constants.PANEL_SIZE/4),p5.floor(i/4)*(state.constants.PANEL_SIZE/4),state.constants.PANEL_SIZE/4,state.constants.PANEL_SIZE/4);
+    // ... 'diff' buffer visualization remains the same ...
+    const { diff, inputs } = state.buffers;
+    if (diff && inputs && state.lastFrameDecisions) {
+        const bs = uiControls.blockSize.value();
+        diff.background(0);
+        state.lastFrameDecisions.forEach(d => {
+            const block = inputs.get(d.gx * bs, d.gy * bs, bs, bs);
+            diff.push();
+            if (d.blockDecision === 'interpolate') diff.tint(255, 127); else diff.filter(p5.INVERT);
+            diff.image(block, d.gx * bs, d.gy * bs, bs, bs);
+            diff.pop();
+        });
     }
+
+    // --- FIX FOR "TOP SOURCE TILES" ---
+    const { viz } = state.buffers;
+    if (!viz || !state.refCoeffsGrid) {
+        frameData.timers.viz = performance.now() - startTime;
+        return frameData;
+    }
+
+    viz.background(50);
+    const counts = {};
+    state.lastFrameDecisions.forEach(d => {
+        if (d.blockDecision === 'interpolate' && d.refPos) {
+            const k = `${d.refPos.x},${d.refPos.y}`;
+            counts[k] = (counts[k] || 0) + 1;
+        }
+    });
+    const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    const bs = uiControls.blockSize.value();
+
+    // Create a temporary p5.Image to reuse for drawing. This is more efficient.
+    const tempTileImage = p5.createImage(bs, bs);
+
+    for (let i = 0; i < Math.min(uiControls.topKTiles.value(), sorted.length); i++) {
+        const [k] = sorted[i];
+        const [rx, ry] = k.split(',').map(Number);
+        
+        // Find the pre-computed DCT coefficients for this tile
+        const gridIndex = ry * Math.floor(state.lastProcW / bs) + rx;
+        const refBlockData = state.refCoeffsGrid[gridIndex];
+
+        if (refBlockData) {
+            // 1. Reconstruct the block's pixel data from its DCT coefficients
+            const reconstructed = reconstructRGBBlock(refBlockData.coeffs);
+            
+            // 2. Load this data into our temporary image
+            tempTileImage.loadPixels();
+            for(let y=0; y<bs; y++) {
+                for(let x=0; x<bs; x++) {
+                    const idx = (y * bs + x) * 4;
+                    tempTileImage.pixels[idx]     = reconstructed[0][y][x] + 128;
+                    tempTileImage.pixels[idx + 1] = reconstructed[1][y][x] + 128;
+                    tempTileImage.pixels[idx + 2] = reconstructed[2][y][x] + 128;
+                    tempTileImage.pixels[idx + 3] = 255;
+                }
+            }
+            tempTileImage.updatePixels();
+
+            // 3. Draw the generated image to the viz buffer. This is fast.
+            const panelSize = state.constants.PANEL_SIZE;
+            viz.image(tempTileImage, (i % 4) * (panelSize / 4), p5.floor(i / 4) * (panelSize / 4), panelSize / 4, panelSize / 4);
+        }
+    }
+
     frameData.timers.viz = performance.now() - startTime;
     updateStat('viz', `Decisions: ${state.lastFrameDecisions.length}\nTime: ${frameData.timers.viz.toFixed(1)}ms`);
     return frameData;
-}
+};
 
 /** Main Orchestration Loop */
 async function runComputationLoop(p5, state, uiControls, workers) {
