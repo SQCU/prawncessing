@@ -8,6 +8,9 @@ class DiagnosticLogger {
         this.consoleLogs = [];
         this.originalConsole = {};
         this.canvasesToCapture = [];
+        this.lfoPeriod = 5000; // Default LFO period in milliseconds (e.g., 5 seconds)
+        this.lfoIntervalId = null;
+        this.lfoIndicatorLamp = null; // Reference to the indicator lamp element
     }
 
     async initialize(jsFiles, canvasGetters) {
@@ -21,6 +24,35 @@ class DiagnosticLogger {
         this.codeHash = await this._generateCodeHash(jsFiles);
         this.active = true;
         console.log(`Logger active. Code hash: ${this.codeHash}`);
+        this.lfoIndicatorLamp = document.getElementById('lfo-indicator-lamp');
+        this.startLFO(); // Automatically start LFO
+    }
+
+    startLFO() {
+        if (this.lfoIntervalId) {
+            this.originalConsole.warn("LFO is already running.");
+            return;
+        }
+        this.originalConsole.log(`Starting LFO with period: ${this.lfoPeriod}ms`);
+        this._updateLFOIndicator('green'); // Set lamp to green when LFO starts
+        this.lfoIntervalId = setInterval(() => {
+            this.captureFrame();
+        }, this.lfoPeriod);
+    }
+
+    stopLFO() {
+        if (this.lfoIntervalId) {
+            this.originalConsole.log("Stopping LFO.");
+            clearInterval(this.lfoIntervalId);
+            this.lfoIntervalId = null;
+            this._updateLFOIndicator('gray'); // Set lamp to gray when LFO stops
+        }
+    }
+
+    _updateLFOIndicator(color) {
+        if (this.lfoIndicatorLamp) {
+            this.lfoIndicatorLamp.style.backgroundColor = color;
+        }
     }
 
     _hashCode(str) {
@@ -72,39 +104,52 @@ class DiagnosticLogger {
         return String(arg);
     }
 
-    captureFrame() {
+    async captureFrame() {
         if (!this.active) {
             this.originalConsole.error("Logger not active. Cannot capture frame.");
             return;
         }
 
-        const canvases = this.canvasesToCapture().filter(c => c && c.width > 1 && c.height > 1);
-        if (canvases.length === 0) {
-            this.originalConsole.warn("No visible canvases to capture.");
-            return;
+        const timestamp = new Date().toISOString();
+        let dataUrl = null;
+
+        try {
+            const canvas = await html2canvas(document.documentElement, { 
+                useCORS: true, 
+                logging: false, 
+                scale: window.devicePixelRatio 
+            });
+            dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+        } catch (error) {
+            this.originalConsole.error("Error capturing full page screenshot:", error);
+            // Fallback to capturing only canvases if full page capture fails
+            const canvases = this.canvasesToCapture().filter(c => c && c.width > 1 && c.height > 1);
+            if (canvases.length === 0) {
+                this.originalConsole.warn("No visible canvases to capture as fallback.");
+                return;
+            }
+
+            const totalWidth = Math.max(...canvases.map(c => c.width));
+            const totalHeight = canvases.reduce((sum, c) => sum + c.height, 0);
+            const tempCanvas = document.createElement('canvas');
+            const ctx = tempCanvas.getContext('2d');
+            tempCanvas.width = totalWidth;
+            tempCanvas.height = totalHeight;
+            ctx.fillStyle = '#333';
+            ctx.fillRect(0, 0, totalWidth, totalHeight);
+
+            let yOffset = 0;
+            canvases.forEach(c => {
+                ctx.drawImage(c, 0, yOffset);
+                yOffset += c.height;
+            });
+            dataUrl = tempCanvas.toDataURL('image/jpeg', 0.7);
         }
 
-        // Create a temporary canvas to stitch them together
-        const totalWidth = Math.max(...canvases.map(c => c.width));
-        const totalHeight = canvases.reduce((sum, c) => sum + c.height, 0);
-        const tempCanvas = document.createElement('canvas');
-        const ctx = tempCanvas.getContext('2d');
-        tempCanvas.width = totalWidth;
-        tempCanvas.height = totalHeight;
-        ctx.fillStyle = '#333';
-        ctx.fillRect(0, 0, totalWidth, totalHeight);
-
-        let yOffset = 0;
-        canvases.forEach(c => {
-            ctx.drawImage(c, 0, yOffset);
-            yOffset += c.height;
-        });
-
-        const timestamp = new Date().toISOString();
         this.screenshots.push({
             timestamp,
-            filename: `seq_${this.codeHash}_${this.screenshots.length}.png`,
-            dataUrl: tempCanvas.toDataURL('image/png')
+            filename: `seq_${this.codeHash}_${this.screenshots.length}.jpeg`,
+            dataUrl: dataUrl
         });
         this.originalConsole.log(`Captured frame ${this.screenshots.length}.`);
     }
@@ -126,7 +171,7 @@ class DiagnosticLogger {
         }
     }
 
-    generateAndDownload() {
+    async generateAndDownload() {
         if (!this.active) {
             this.originalConsole.error("Logger not active.");
             return;
@@ -134,13 +179,13 @@ class DiagnosticLogger {
         this.originalConsole.log("Sending log files to server...");
 
         // 1. Send screenshots
-        this.screenshots.forEach(ss => {
-            this._sendToServer({ type: 'screenshot', filename: ss.filename, payload: ss.dataUrl });
-        });
+        await Promise.all(this.screenshots.map(ss => {
+            return this._sendToServer({ type: 'screenshot', filename: ss.filename, payload: ss.dataUrl });
+        }));
 
         // 2. Send console log file
         const logText = this.consoleLogs.map(l => `[${l.timestamp}] [${l.level.toUpperCase()}] ${l.message}`).join('\n');
-        this._sendToServer({ type: 'log', filename: `log_${this.codeHash}.txt`, payload: logText });
+        await this._sendToServer({ type: 'log', filename: `log_${this.codeHash}.txt`, payload: logText });
 
         // 3. Send metadata JSON
         const metadata = {
@@ -149,7 +194,7 @@ class DiagnosticLogger {
             screenshots: this.screenshots.map(ss => ({ timestamp: ss.timestamp, filename: ss.filename })),
             console: this.consoleLogs
         };
-        this._sendToServer({ type: 'metadata', filename: `meta_${this.codeHash}.json`, payload: JSON.stringify(metadata, null, 2) });
+        await this._sendToServer({ type: 'metadata', filename: `meta_${this.codeHash}_${new Date().getTime()}.json`, payload: JSON.stringify(metadata, null, 2) });
 
         // Reset for next session
         this._reset();

@@ -25,7 +25,12 @@ function setup() {
 }
 
 // ------------ P5.JS DRAW LOOP ------------- //
-function draw() {
+            stopBtn.disabled = true;
+        });
+
+        };
+
+    p.draw = () => {
   // We don't clear the background, we will draw over every pixel.
   
   // Check if the video is ready

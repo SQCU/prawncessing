@@ -89,6 +89,65 @@ self.onmessage = (e) => {
             }
         }
         self.postMessage({ outputPixels, decisionPlan, frameStats: { scores: allFrameScores } });
+    } else if (operation === 'compute_top_tiles_viz') {
+        const { decisions, blockSize, panelSize, topKTiles } = e.data;
+
+        const counts = {};
+        decisions.forEach(d => {
+            if (d.blockDecision === 'interpolate' && d.refPos) {
+                const k = `${d.refPos.x},${d.refPos.y}`;
+                counts[k] = (counts[k] || 0) + 1;
+            }
+        });
+
+        const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+
+        const offscreen = new OffscreenCanvas(panelSize, panelSize);
+        const ctx = offscreen.getContext('2d');
+        ctx.fillStyle = 'rgb(50, 50, 50)'; // Match the background color in hotloop.js
+        ctx.fillRect(0, 0, panelSize, panelSize);
+
+        const vizTileSize = panelSize / 4; // Assuming 4x4 grid for top tiles
+
+        for (let i = 0; i < Math.min(topKTiles, sorted.length); i++) {
+            const [k] = sorted[i];
+            const [rx, ry] = k.split(',').map(Number);
+
+            const refBlockData = refCoeffsGrid.find(b => b.pos.x === rx && b.pos.y === ry);
+            if (!refBlockData) continue;
+
+            const reconstructed = reconstructRGBBlock(refBlockData.coeffs);
+
+            // Create a temporary ImageData to draw on the OffscreenCanvas
+            const imageData = ctx.createImageData(blockSize, blockSize);
+            for (let j = 0; j < blockSize; j++) {
+                for (let i = 0; i < blockSize; i++) {
+                    const idx = (j * blockSize + i) * 4;
+                    imageData.data[idx] = Math.max(0, Math.min(255, reconstructed[0][j][i] + 128));
+                    imageData.data[idx + 1] = Math.max(0, Math.min(255, reconstructed[1][j][i] + 128));
+                    imageData.data[idx + 2] = Math.max(0, Math.min(255, reconstructed[2][j][i] + 128));
+                    imageData.data[idx + 3] = 255;
+                }
+            }
+
+            // Draw the block onto the OffscreenCanvas
+            // Need to scale it to vizTileSize
+            const tempCanvas = new OffscreenCanvas(blockSize, blockSize);
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.putImageData(imageData, 0, 0);
+
+            ctx.drawImage(tempCanvas,
+                          0, 0, blockSize, blockSize, // Source rectangle
+                          (i % 4) * vizTileSize,
+                          Math.floor(i / 4) * vizTileSize,
+                          vizTileSize,
+                          vizTileSize // Destination rectangle
+                         );
+        }
+
+        const imageBitmap = await createImageBitmap(offscreen);
+        self.postMessage({ operation: 'top_tiles_viz_result', imageBitmap }, [imageBitmap]);
+        return;
     }
 };
 self.postMessage({ status: 'ready' });

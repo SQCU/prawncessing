@@ -11,6 +11,40 @@
         .control-group { display: flex; flex-direction: column; align-items: center; }
         label { font-weight: bold; margin-bottom: 5px; }
         select, input[type="range"] { width: 120px; }
+        /* Styles for sliders to ensure html2canvas renders them */
+        input[type="range"] {
+            -webkit-appearance: none; /* Override default browser styles */
+            width: 100%; /* Full width of its container */
+            height: 8px; /* Thickness of the track */
+            background: #d3d3d3; /* Grey background for the track */
+            outline: none; /* Remove outline */
+            opacity: 0.7; /* Semi-transparent */
+            -webkit-transition: .2s; /* 0.2 seconds transition on hover */
+            transition: opacity .2s;
+            border-radius: 5px; /* Rounded corners for the track */
+        }
+
+        input[type="range"]:hover {
+            opacity: 1; /* Fully opaque on hover */
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; /* Override default browser styles */
+            appearance: none;
+            width: 20px; /* Size of the thumb */
+            height: 20px; /* Size of the thumb */
+            border-radius: 50%; /* Round thumb */
+            background: #4CAF50; /* Green color for the thumb */
+            cursor: pointer; /* Cursor on hover */
+        }
+
+        input[type="range"]::-moz-range-thumb {
+            width: 20px; /* Size of the thumb */
+            height: 20px; /* Size of the thumb */
+            border-radius: 50%; /* Round thumb */
+            background: #4CAF50; /* Green color for the thumb */
+            cursor: pointer; /* Cursor on hover */
+        }
         #info-card-container { display: flex; flex-wrap: nowrap; gap: 15px; width: 100%; justify-content: center; overflow-x: auto; padding-bottom: 15px; margin-bottom: 20px; }
         #pipeline-container { width: 100%; display: flex; justify-content: center; }
         .module-container { border: 1px solid #ddd; border-radius: 8px; background: #fff; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); display: flex; flex-direction: column; gap: 10px; min-width: 256px;}
@@ -25,15 +59,27 @@
     <script src="ui.js"></script>
     <script src="hotloop.js"></script>
     <script src="diagnostics.js"></script>
+    <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
 </head>
 <body>
     <h1>Professional DCT Compression Visualizer</h1>
     <div id="controls"></div>
-    <div id="diagnostics-controls" style="margin-top: 10px; padding: 10px; background-color: #fff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: flex; gap: 10px;">
+    <div id="diagnostics-controls" style="margin-top: 10px; padding: 10px; background-color: #fff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: flex; gap: 10px; align-items: center;">
         <button id="start-log">Start Logging</button>
         <button id="capture-frame" disabled>Capture Frame</button>
         <button id="stop-log" disabled>Stop & Download</button>
+        <div id="lfo-cam-wheel" style="width: 30px; height: 30px; border-radius: 50%; background-color: #ccc; border: 2px solid #666; position: relative; overflow: hidden;">
+            <div style="width: 50%; height: 50%; background-color: #666; position: absolute; top: 0; left: 50%; transform: translateX(-50%); transform-origin: bottom center; animation: rotateCam var(--lfo-animation-duration) infinite linear;"></div>
+        </div>
+        <div id="lfo-indicator-lamp" style="width: 15px; height: 15px; border-radius: 50%; background-color: gray;"></div>
     </div>
+
+    <style>
+        @keyframes rotateCam {
+            from { transform: translateX(-50%) rotate(0deg); }
+            to { transform: translateX(-50%) rotate(360deg); }
+        }
+    </style>
     <div id="info-card-container"></div>
     <div id="pipeline-container"></div>
 
@@ -92,7 +138,7 @@ const p5_instance = new p5(p => {
             {id: 'similarityThresh', label: 'Similarity Thresh', type: 'slider', min: -3, max: 1.5, default: -1.0, step: 0.1},
             {id: 'adaptiveRange', label: 'Adaptive Range', type: 'checkbox', default: false},
             {id: 'emaAlpha', label: 'EMA Alpha', type: 'slider', min: 0.01, max: 0.5, default: 0.1, step: 0.01},
-            {id: 'oscPeriod', label: 'Oscillator Period', type: 'slider', min: 0.1, max: 10, default: 4, step: 0.1},
+            {id: 'oscPeriod', label: 'Oscillator Period', type: 'slider', min: 0, max: 100, default: 50, step: 1},
             {id: 'skewStrength', label: 'Skew Strength', type: 'slider', min: 0, max: 2.0, default: 0.5, step: 0.05},
             {id: 'topKTiles', label: 'Top Tiles (k)', type: 'slider', min: 1, max: 16, default: 4, step: 1}
         ];
@@ -104,6 +150,20 @@ const p5_instance = new p5(p => {
         
         uiControls.scheduler.changed(() => appState.needsRefRecompute = true);
         uiControls.blockSize.changed(() => appState.needsRefRecompute = true);
+        uiControls.oscPeriod.changed(() => {
+            // Map linear slider value to logarithmic period (0.2s to 5s)
+            const minPeriod = 0.2; // 5 Hz
+            const maxPeriod = 5;   // 0.2 Hz
+            const sliderValue = uiControls.oscPeriod.value();
+            const periodSeconds = minPeriod * Math.pow((maxPeriod / minPeriod), (sliderValue / 100));
+            logger.lfoPeriod = periodSeconds * 1000; // Convert to milliseconds
+            logger.stopLFO();
+            logger.startLFO();
+            const lfoCamWheel = document.getElementById('lfo-cam-wheel');
+            if (lfoCamWheel) {
+                lfoCamWheel.style.setProperty('--lfo-animation-duration', `${periodSeconds}s`);
+            }
+        });
         
         appState.video = p.createCapture(p.VIDEO, ()=>console.log("Webcam ready."));
         appState.video.size(PANEL_SIZE,PANEL_SIZE); appState.video.hide();
@@ -115,6 +175,9 @@ const p5_instance = new p5(p => {
             const worker = new Worker('worker.js');
             worker.addEventListener('message', (e) => {
                 if (e.data.status === 'ready') readyWorkers++;
+                else if (e.data.operation === 'top_tiles_viz_result') {
+                    appState.topTilesVizImageBitmap = e.data.imageBitmap;
+                }
             });
             workers.push(worker);
         }
@@ -124,16 +187,29 @@ const p5_instance = new p5(p => {
         const captureBtn = document.getElementById('capture-frame');
         const stopBtn = document.getElementById('stop-log');
 
-        startBtn.addEventListener('click', async () => {
-            const jsFiles = ['sketch.js', 'ui.js', 'hotloop.js', 'worker.js', 'dct.js', 'kdtree.js', 'diagnostics.js'];
-            const canvasGetters = () => [
-                appState.buffers.inputs, 
-                appState.buffers.ref, 
-                appState.buffers.diff, 
-                appState.buffers.postprocess, 
-                appState.buffers.viz
-            ].map(b => b ? b.canvas : null);
+        const jsFiles = ['sketch.js', 'ui.js', 'hotloop.js', 'worker.js', 'dct.js', 'kdtree.js', 'diagnostics.js'];
+        const canvasGetters = () => [
+            appState.buffers.inputs, 
+            appState.buffers.ref, 
+            appState.buffers.diff, 
+            appState.buffers.postprocess, 
+            appState.buffers.viz
+        ].map(b => b ? b.canvas : null);
 
+        // Initialize logger automatically on setup
+        logger.initialize(jsFiles, canvasGetters).then(() => {
+            startBtn.disabled = true;
+            captureBtn.disabled = false;
+            stopBtn.disabled = false;
+            // Update cam-wheel animation speed based on LFO period
+            const lfoCamWheel = document.getElementById('lfo-cam-wheel');
+            if (lfoCamWheel) {
+                lfoCamWheel.style.setProperty('--lfo-animation-duration', `${logger.lfoPeriod / 1000}s`);
+            }
+        });
+
+        startBtn.addEventListener('click', async () => {
+            // This button now serves as a re-initialization or manual start if needed
             await logger.initialize(jsFiles, canvasGetters);
             startBtn.disabled = true;
             captureBtn.disabled = false;
@@ -142,6 +218,7 @@ const p5_instance = new p5(p => {
 
         captureBtn.addEventListener('click', () => logger.captureFrame());
         stopBtn.addEventListener('click', () => {
+            logger.stopLFO();
             logger.generateAndDownload();
             startBtn.disabled = false;
             captureBtn.disabled = true;

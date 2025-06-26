@@ -11,3 +11,19 @@ The following PIDs were forcefully terminated:
 2122953 pts/3    00:00:00 python3
 2122954 pts/3    00:00:00 python3
 ---
+---
+Timestamp: Thu Jun 26 14:04:04 PDT 2025
+The following PIDs were forcefully terminated:
+    PID TTY          TIME CMD
+2122995 pts/3    00:00:01 python3
+2122996 pts/3    00:00:01 python3
+2122997 pts/3    00:00:01 python3
+---
+---
+Timestamp: Thu Jun 26 14:11:50 PDT 2025
+The following PIDs were forcefully terminated:
+    PID TTY          TIME CMD
+2127912 pts/3    00:00:00 python3
+2127913 pts/3    00:00:00 python3
+2127914 pts/3    00:00:00 python3
+---

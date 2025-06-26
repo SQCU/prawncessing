@@ -35,6 +35,7 @@ Pipeline.acquireInputs = function(p5, frameData, state, uiControls) {
         Object.values(state.buffers).forEach(b => b && b.remove());
         state.buffers = { inputs: p5.createGraphics(procW, procH), ref: p5.createGraphics(procW, procH), diff: p5.createGraphics(procW, procH), postprocess: p5.createGraphics(procW, procH), viz: p5.createGraphics(PANEL_SIZE, PANEL_SIZE) };
         state.lastProcW = procW; state.lastProcH = procH; state.needsRefRecompute = true;
+        state.topTilesVizImageBitmap = null; // Initialize the new state variable
     }
     if (!state.buffers.inputs) return frameData;
     state.buffers.inputs.image(state.video, 0, 0, procW, procH);
@@ -125,6 +126,18 @@ Pipeline.processWorkerResults = function(frameData, state, uiControls, workers) 
     state.buffers.postprocess.updatePixels();
     frameData.timers.postprocess = performance.now() - startTime;
     updateStat('postprocess', `EMA Min/Max: ${state.emaMin.toFixed(2)}/${state.emaMax.toFixed(2)}\nTime: ${frameData.timers.postprocess.toFixed(1)}ms`);
+
+    // Send message to worker to compute top tiles visualization
+    if (workers.length > 0 && state.toggles.viz) {
+        workers[0].postMessage({
+            operation: 'compute_top_tiles_viz',
+            decisions: state.lastFrameDecisions,
+            blockSize: uiControls.blockSize.value(),
+            panelSize: state.constants.PANEL_SIZE,
+            topKTiles: uiControls.topKTiles.value()
+        });
+    }
+
     return frameData;
 };
 
@@ -146,12 +159,11 @@ Pipeline.updateVisualizations = function(p5, frameData, state, uiControls) {
     state.lastFrameDecisions.forEach(d=>{if(d.blockDecision==='interpolate' && d.refPos){const k=`${d.refPos.x},${d.refPos.y}`;counts[k]=(counts[k]||0)+1;}});
     const sorted=Object.entries(counts).sort((a,b)=>b[1]-a[1]);
     viz.background(50);
-    for(let i=0;i<Math.min(uiControls.topKTiles.value(),sorted.length);i++){
-        const[k]=sorted[i];const[rx,ry]=k.split(',').map(Number);
-        const tile=ref.get(rx*bs,ry*bs,bs,bs);
-        viz.image(tile,(i%4)*(state.constants.PANEL_SIZE/4),p5.floor(i/4)*(state.constants.PANEL_SIZE/4),state.constants.PANEL_SIZE/4,state.constants.PANEL_SIZE/4);
+    if (state.topTilesVizImageBitmap) {
+        viz.image(state.topTilesVizImageBitmap, 0, 0);
     }
     frameData.timers.viz = performance.now() - startTime;
     updateStat('viz', `Decisions: ${state.lastFrameDecisions.length}\nTime: ${frameData.timers.viz.toFixed(1)}ms`);
+    console.log(`Viz Time: ${frameData.timers.viz.toFixed(1)}ms`);
     return frameData;
 };

@@ -1,11 +1,21 @@
-# Python-generated files
-__pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
-.env
+# Ignore log directories
+seqlog/
+manlog/
 
-# Virtual environments
-.venv
+# Ignore Python virtual environment
+.venv/
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+
+# Ignore editor/IDE specific files
+.idea/
+.vscode/
+
+# Ignore OS generated files
+.DS_Store
+Thumbs.db
+
+# Zone.Identifier files
+*:Zone.Identifier.env
