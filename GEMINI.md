@@ -109,3 +109,11 @@ During this session, new interaction protocols were improvised and formalized to
     *   **Tetragram Sealing:** The debriefing file is timestamped and sealed with a tetragram, indicating it has been written.
     *   **Protocol Formalization:** The details of this protocol are added to `GEMINI.md` under the 'Meta-Progress' heading.
     *   **Commit:** All changes related to the debriefing are committed.
+
+---
+
+## Python Environment Management
+
+This project utilizes `uv` for Python environment and package management. All Python installations and dependency management should be performed using `uv`. To activate the project's virtual environment, use `uv venv activate`.
+
+---
