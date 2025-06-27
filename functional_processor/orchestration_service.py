@@ -1,6 +1,9 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
+import logging
+from logging.handlers import RotatingFileHandler
+import os
 
 from frame_processor import process_frame_logic
 from output_retriever import get_processed_frame_logic
@@ -8,6 +11,18 @@ from reference_manager import set_reference_logic
 
 app = Flask(__name__)
 CORS(app)
+
+# Configure logging
+if not app.debug:
+    if not os.path.exists('logs'):
+        os.mkdir('logs')
+    file_handler = RotatingFileHandler('logs/orchestration_service.log', maxBytes=10240, backupCount=10)
+    file_handler.setFormatter(logging.Formatter(
+        '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'))
+    file_handler.setLevel(logging.INFO)
+    app.logger.addHandler(file_handler)
+    app.logger.setLevel(logging.INFO)
+    app.logger.info('Orchestration service startup')
 
 # Define the URLs for the functional services (for direct exposure if needed)
 DCT_SERVICE_URL = "http://localhost:5002"

@@ -11,7 +11,7 @@
 
 *   **Success Rubric:** The web visualizer can successfully display the processed video stream and send user commands to the backend, with data flowing reliably from the source.
 *   **Subordinate Goals:**
-    *   [ ] **Stabilize Inter-Service Communication:** Systematically diagnose and resolve the network and CORS issues between the visualizer and the various backend services.
+    *   [x] **Stabilize Inter-Service Communication:** Systematically diagnose and resolve the network and CORS issues between the visualizer and the various backend services.
     *   [ ] **Implement Robust Data Flow:** Ensure video data flows correctly and efficiently from the mock server, through the functional processing pipeline, and to the web visualizer.
     *   [ ] **Video Stream Endpoint:** An endpoint that provides the processed video stream to the frontend.
     *   [ ] **Interactive Control Interface:** A UI with controls for pausing, playing, and manipulating the datamoshing process.
