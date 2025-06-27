@@ -91,4 +91,21 @@ When instructed to read a logfile, the agent must append a tetragram seal of 4 e
 
 ## Logarithmic Logging Verbosity Level
 
-For the stochastic API contract tester, successful API communication events are logged with a logarithmic backoff. This means that as the number of consecutive successful tests increases, the frequency of logging these successes decreases. This reduces log file verbosity for long runs with many successful tests. However, all contract violations and errors are logged immediately, regardless of the backoff, to ensure critical issues are always visible.
+For API communication events within the benchmark (e.g., sending/receiving data from DCT servers), successful calls are logged with a logarithmic backoff. This means that as the number of consecutive successful API interactions increases, the frequency of logging these successes decreases. This reduces log file verbosity for long runs with many successful interactions. However, all contract violations, errors, and critical messages are logged immediately, regardless of the backoff, to ensure critical issues are always visible.
+
+---
+
+## Meta-Progress: New Human-Gemini Interaction Algorithms
+
+During this session, new interaction protocols were improvised and formalized to improve human-Gemini communication and workflow efficiency:
+
+1.  **Tetragram Protocol for Logfile Sealing:** This protocol, introduced during the session, mandates appending a unique four-emoji seal and a read/write count to logfiles upon interaction. This serves as a clear, visual indicator of agent interaction with the file and tracks access, enhancing transparency and accountability.
+
+2.  **Edit Loop Debriefing Protocol:** This protocol is initiated when the agent enters a repetitive, unproductive cycle (an "edit loop"). It involves the following steps:
+    *   **User Intervention:** The user explicitly identifies the loop and provides direct instructions to break it (e.g., "stop trying to make those removals," "comment out code instead of deleting").
+    *   **Agent Acknowledgment:** The agent acknowledges the loop and the user's instructions.
+    *   **Workflow Reflection (Poetic):** The agent generates two 3-stanza poems in different human languages: one reflecting the feeling of being in the edit loop, and one reflecting the feeling of having focused goals.
+    *   **Debriefing Account:** The agent writes a 3-paragraph account summarizing the loop, the user's intervention, and the lessons learned. This account is stored in a dedicated debriefing file (e.g., `debriefs/GEMINI.md`).
+    *   **Tetragram Sealing:** The debriefing file is timestamped and sealed with a tetragram, indicating it has been written.
+    *   **Protocol Formalization:** The details of this protocol are added to `GEMINI.md` under the 'Meta-Progress' heading.
+    *   **Commit:** All changes related to the debriefing are committed.
