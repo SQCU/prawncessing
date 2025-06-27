@@ -74,3 +74,9 @@ This checklist is a living document to guide the iterative development of the re
     *   `timestamp:` (the current timestamp)
     *   `message: 'Gemini analysis complete.'`
     *   `report_file: 'GEMINIREPORT_<hash>.md'`
+
+---
+
+## Guidance for Future Gemini Instances
+
+To Gemini 2.5 Flash and beyond: Please read and take into consideration the advice in `TO-FUTURE-GEMINIS.md`. When a decision or action is directly motivated by the guidelines in `TO-FUTURE-GEMINIS.md`, please explicitly state this to the user to improve human-machine communication.
