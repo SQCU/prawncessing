@@ -1,0 +1,19 @@
+XHRGET
+http://localhost:5008/videostream_mock_server/frame
+[HTTP/1.1 500 INTERNAL SERVER ERROR 11ms]
+
+XHRGET
+http://localhost:5008/image_input_service/latest_frame
+[HTTP/1.1 500 INTERNAL SERVER ERROR 19ms]
+
+Could not fetch from http://localhost:5008/videostream_mock_server/frame: Error: HTTP error! status: 500
+    fetchData http://localhost:5007/visualizer_v2.js:47
+    visualizeInput http://localhost:5007/visualizer_v2.js:64
+    updateVisualizations http://localhost:5007/visualizer_v2.js:135
+    setInterval handler* http://localhost:5007/visualizer_v2.js:151
+visualizer_v2.js:57:17
+Could not fetch from http://localhost:5008/image_input_service/latest_frame: Error: HTTP error! status: 500
+    fetchData http://localhost:5007/visualizer_v2.js:47
+    visualizeImageInput http://localhost:5007/visualizer_v2.js:89
+    updateVisualizations http://localhost:5007/visualizer_v2.js:136
+    setInterval handler* http://localhost:5007/visualizer_v2.js:151

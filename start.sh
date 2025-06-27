@@ -13,3 +13,4 @@ python3 proxy_server.py
 
 # Clean up background processes on exit
 trap "kill $SAVE_SERVER_PID $APP_SERVER_PID" EXIT
+# To stop these services, you can also use `kill_ports.sh` with their respective ports if they become hung.

@@ -1,6 +1,11 @@
 # Ignore log directories
 seqlog/
 manlog/
+functional_processor/logs/
+looselogs/
+
+# Ignore specific log files
+*.log
 
 # Ignore Python virtual environment
 .venv/

@@ -1,73 +1,79 @@
-#!/usr/bin/env python
-from http.server import BaseHTTPRequestHandler, HTTPServer
+# !!! WARNING !!!
+# THIS IS A REVERSE PROXY. ITS SOLE PURPOSE IS TO ROUTE DYNAMIC API REQUESTS
+# TO THE APPROPRIATE BACKEND SERVICE. IT SHOULD NOT, UNDER ANY CIRCUMSTANCES,
+# BE USED TO SERVE STATIC FILES. THAT IS THE JOB OF A DEDICATED STATIC
+# FILE SERVER (E.G., NGINX). ADDING STATIC FILE SERVING LOGIC TO THIS
+# PROXY WILL ONLY LEAD TO CONFUSION AND MAINTENANCE HEADACHES.
+#
+# IF YOU ARE TEMPTED TO ADD STATIC FILE SERVING TO THIS PROXY, PLEASE
+# RESIST THE URGE AND SET UP A PROPER STATIC FILE SERVER INSTEAD.
+
+from flask import Flask, request, jsonify, Response
+from flask_cors import CORS
 import requests
-import json
+import logging
 
-PORT = 8000
-SAVE_SERVER = "http://localhost:8001"
-APP_SERVER = "http://localhost:8002"
 
-class ProxyHandler(BaseHTTPRequestHandler):
-    def _get_service_info(self):
-        return {
-            "proxy_port": PORT,
-            "services": {
-                "save_log": {
-                    "url": f"{SAVE_SERVER}/savelog",
-                    "description": "Endpoint for saving logs and screenshots."
-                },
-                "ethos": {
-                    "url": f"{SAVE_SERVER}/ETHOS.MD",
-                    "description": "The project's ethos."
-                },
-                "about": {
-                    "url": f"{SAVE_SERVER}/ABOUT",
-                    "description": "System resource information."
-                },
-                "application": {
-                    "url": f"{APP_SERVER}",
-                    "description": "The main web application."
-                }
-            }
-        }
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
 
-    def _proxy_request(self, method, url, data=None, headers=None):
-        try:
-            resp = requests.request(method, url, data=data, headers=headers, stream=True)
-            self.send_response(resp.status_code)
-            for key, value in resp.headers.items():
-                if key.lower() not in ['content-encoding', 'transfer-encoding', 'content-length']:
-                    self.send_header(key, value)
-            self.send_header('Content-Length', str(len(resp.content)))
-            self.end_headers()
-            self.wfile.write(resp.content)
-        except requests.exceptions.RequestException as e:
-            self.send_error(502, f"Proxy Error: {e}")
+app = Flask(__name__)
+CORS(app) # Enable CORS for all routes
 
-    def do_GET(self):
-        if self.path.startswith('/savelog') or self.path.startswith('/ETHOS.MD') or self.path.startswith('/ABOUT'):
-            self._proxy_request('GET', f"{SAVE_SERVER}{self.path}", headers=self.headers)
-        elif self.path == '/' or self.path.startswith('/index.html') or self.path.endswith(('.js', '.css')):
-            self._proxy_request('GET', f"{APP_SERVER}{self.path}", headers=self.headers)
-        elif self.path == '/discover':
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps(self._get_service_info()).encode('utf-8'))
-        else:
-            self.send_error(404, 'Not Found')
+# Define the base URLs for the backend services
+SERVICE_MAP = {
+    "videostream_mock_server": "http://localhost:8003",
+    "dct_service": "http://localhost:5002",
+    "reference_frame_service": "http://localhost:5003",
+    "difference_service": "http://localhost:5004",
+    "accumulator_service": "http://localhost:5005",
+    "orchestration_service": "http://localhost:5006",
+    "visualizer_server": "http://localhost:5007" # The server for static visualizer files
+}
 
-    def do_POST(self):
-        if self.path.startswith('/savelog'):
-            content_length = int(self.headers['Content-Length'])
-            post_data = self.rfile.read(content_length)
-            self._proxy_request('POST', f"{SAVE_SERVER}{self.path}", data=post_data, headers=self.headers)
-        else:
-            self.send_error(404, 'Not Found')
+
+
+
+
+
+
+@app.route('/<service_name>/<path:subpath>', methods=['GET', 'POST', 'PUT', 'DELETE'])
+def proxy_request(service_name, subpath):
+    base_url = SERVICE_MAP.get(service_name)
+    if not base_url:
+        logging.error(f"Unknown service: {service_name}")
+        return jsonify({"error": "Unknown service"}), 404
+
+    target_url = f"{base_url}/{subpath}"
+    method = request.method
+    headers = {key: value for key, value in request.headers if key.lower() not in ['host', 'content-length']}
+    data = request.get_data() if method in ['POST', 'PUT'] else None
+
+    logging.info(f"Proxying {method} request to {target_url}")
+
+    try:
+        resp = requests.request(method, target_url, headers=headers, data=data, params=request.args, stream=True)
+
+        # Create a new response object
+        response = Response(resp.iter_content(chunk_size=8192), status=resp.status_code)
+
+        # Copy headers from the backend response to the proxy response
+        excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
+        for key, value in resp.headers.items():
+            if key.lower() not in excluded_headers:
+                response.headers[key] = value
+        
+        # Add CORS headers to the proxy response
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = '*'
+        response.headers['Access-Control-Allow-Headers'] = '*'
+
+        return response
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Proxy communication error with {base_url}: {e}")
+        return jsonify({"error": f"Proxy communication error: {e}"}), 500
 
 if __name__ == '__main__':
-    server_address = ('', PORT)
-    httpd = HTTPServer(server_address, ProxyHandler)
-    print(f"Proxy server started at localhost:{PORT}")
-    print("Discover services at http://localhost:8000/discover")
-    httpd.serve_forever()
+    app.run(port=5008) # Proxy server will run on port 5008
+
+# This server is typically started by `start_visualizer_services.sh`.

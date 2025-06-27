@@ -45,3 +45,6 @@ def get_latest_reference_frame():
 
 if __name__ == '__main__':
     app.run(port=5003)
+
+# This service is typically started by `functional_processor/start_functional_processors.sh` or `start_functional_processors_orchestration.sh`.
+

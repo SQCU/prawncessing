@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# This script specifically targets older server instances.
+# Note: For a more generic solution, consider using `kill_ports.sh` with the relevant ports.
 PORTS=(8000 8001 8002 5002)
 LOG_FILE="impolite-shutdown.log"
 

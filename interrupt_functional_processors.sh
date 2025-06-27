@@ -1,13 +1,15 @@
 #!/bin/bash
 
-PORTS=(5002 5003 5004 5005 5006)
+# This script specifically targets functional processor services.
+# Note: For a more generic solution, consider using `kill_ports.sh` with the relevant ports.
+PORTS=(5001 5002 5003 5004 5005 5006)
 LOG_FILE="impolite-shutdown-functional-processors.log"
 
 # Combine lsof commands to get all PIDs at once
-PIDS=$(lsof -t -i:5002 -i:5003 -i:5004 -i:5005 -i:5006)
+PIDS=$(lsof -t -i:5001 -i:5002 -i:5003 -i:5004 -i:5005 -i:5006)
 
 if [ -z "$PIDS" ]; then
-    echo "No functional processor servers found on ports 5002-5006."
+    echo "No functional processor servers found on ports 5001-5006."
     exit 0
 fi
 

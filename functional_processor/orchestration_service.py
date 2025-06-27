@@ -63,7 +63,12 @@ def set_reference():
     except requests.exceptions.RequestException as e:
         return jsonify({"error": f"Service communication error: {e}"}), 500
 
-# Routes to expose subordinate resources directly (for visualization clients)
+# This section defines routes that act as an inter-service router.
+# Its functional role is to proxy requests from the visualizer (or other clients)
+# to specific functional processing services (e.g., DCT, Difference, Accumulator).
+# This design helps avoid CORS errors by centralizing communication through a single origin
+# (the orchestration service) and reduces unnecessary coupling by abstracting the direct
+# URLs of individual services from the frontend.
 @app.route('/dct_service/<path:subpath>', methods=['GET', 'POST'])
 def proxy_dct_service(subpath):
     return _proxy_request(DCT_SERVICE_URL, subpath)
@@ -80,6 +85,9 @@ def proxy_difference_service(subpath):
 def proxy_accumulator_service(subpath):
     return _proxy_request(ACCUMULATOR_SERVICE_URL, subpath)
 
+# Helper function to proxy requests to other internal services.
+# This centralizes the logic for forwarding requests, handling headers,
+# and managing potential communication errors.
 def _proxy_request(base_url, subpath):
     url = f"{base_url}/{subpath}"
     method = request.method
@@ -96,3 +104,5 @@ def _proxy_request(base_url, subpath):
 
 if __name__ == '__main__':
     app.run(port=5006)
+
+# This service is typically started by `functional_processor/start_functional_processors.sh` or `start_functional_processors_orchestration.sh`.

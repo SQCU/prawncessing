@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# This script specifically targets the DCT server.
+# Note: For a more generic solution, consider using `kill_ports.sh` with the relevant port.
 PORT=5002
 LOG_FILE="impolite-shutdown-dct-server.log"
 

@@ -136,3 +136,6 @@ def get_latest_inverse_dct():
 
 if __name__ == '__main__':
     app.run(port=5002)
+
+# This service is typically started by `functional_processor/start_functional_processors.sh` or `start_functional_processors_orchestration.sh`.
+
