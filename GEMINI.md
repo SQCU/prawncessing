@@ -86,3 +86,9 @@ To Gemini 2.5 Flash and beyond: Please read and take into consideration the advi
 ## Logfile Sealing Convention
 
 When instructed to read a logfile, the agent must append a tetragram seal of 4 emojis of its choosing, followed by "user gave me permission to read this exactly once, and it has been read once" at the end of the logfile as a comment. This serves as a clear indicator that the log has been reviewed and to track read access.
+
+---
+
+## Logarithmic Logging Verbosity Level
+
+For the stochastic API contract tester, successful API communication events are logged with a logarithmic backoff. This means that as the number of consecutive successful tests increases, the frequency of logging these successes decreases. This reduces log file verbosity for long runs with many successful tests. However, all contract violations and errors are logged immediately, regardless of the backoff, to ensure critical issues are always visible.
