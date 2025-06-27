@@ -13,3 +13,7 @@
         *   [x] Write unit tests for the accumulation logic.
     *   [x] **Reference Frame Manager:**
         *   [x] A module to hold and provide a reference frame for processing.
+    *   [x] **Orchestration Service Refactor:**
+        *   [x] Break apart the orchestration service into different isolated files for each routed service.
+        *   [x] Ensure the service router contains only logic for routing requests and exposing subordinate resources.
+        *   [x] Update unit tests to reflect structural changes.

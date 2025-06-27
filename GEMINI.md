@@ -78,3 +78,10 @@ During this session, new interaction protocols were improvised and formalized to
 This project utilizes `uv` for Python environment and package management. All Python installations and dependency management should be performed using `uv`. To activate the project's virtual environment, use `uv venv activate`.
 
 ---
+
+## Operational Guidelines for Gemini
+
+- **File Modification Policy:** Only modify existing files that are tracked in the Git history. Avoid making direct edits to untracked files or reference code samples, as this can introduce regressions and bypass version control.
+- **Security Check during Git Operations:** Always verify that environment files (e.g., `.env`) or any other files potentially containing API keys or sensitive information are not staged or committed during Git operations. Prioritize security and prevent accidental leakage of credentials.
+
+---
