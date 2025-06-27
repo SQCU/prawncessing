@@ -12,46 +12,7 @@ These files are not useful in the current Linux development environment and crea
 
 ## Real-time Video Signal Processor Development Checklist
 
-This checklist is a living document to guide the iterative development of the real-time video signal processor. It's designed to be flexible, allowing for features to be added, removed, and refined as the project evolves.
-
-### Core Functionality
-
-*   [ ] **Image Input:** Can the system accept a stream of images (i.e., a video)?
-*   [ ] **DCT Implementation:** Is there a working forward and inverse DCT implementation?
-*   [ ] **Reference Frame:** Can the system hold and use a reference frame?
-*   [ ] **Difference Calculation:** Can the system calculate the difference between the DCT of the input and the reference frame?
-*   [ ] **Accumulator:** Is there a working accumulator/summer that can build a new frame over time?
-*   [ ] **Output:** Can the system display the processed video stream in real-time?
-
-### Performance & Optimization
-
-*   [ ] **Benchmarking:** Are there basic benchmarks for each processing stage?
-*   [ ] **Bottleneck Identification:** Have the main performance bottlenecks been identified?
-*   [ ] **Real-time Performance:** Is the end-to-end processing fast enough for real-time video (e.g., >30fps)?
-*   [ ] **Parallelization:** Can any parts of the process be parallelized (e.g., using web workers or other techniques)?
-
-### Views & Debugging
-
-*   [ ] **Input View:** Is there a view for the original, unprocessed video stream?
-*   [ ] **DCT View:** Is there a view for the DCT coefficients?
-*   [ ] **Reference View:** Is there a view for the current reference frame?
-*   [ ] **Difference View:** Is there a view for the DCT difference?
-*   [ ] **Accumulator View:** Is there a view for the state of the accumulator?
-*   [ ] **Output View:** Is there a view for the final, processed video stream?
-*   [ ] **Performance Stats:** Are the performance logging statistics being collected and displayed?
-
-### Scheduling & Interaction
-
-*   [ ] **Basic Scheduling:** Can the accumulator be controlled by a simple, predefined schedule?
-*   [ ] **Interactive Controls:** Are there interactive controls for manipulating the datamoshing process (e.g., pausing, changing the schedule, etc.)?
-*   [ ] **User Feedback:** Is there clear visual feedback for user interactions?
-
-### Extensibility & Refinement
-
-*   [ ] **Modular Design:** Is the code organized in a modular way that makes it easy to add or remove features?
-*   [ ] **Code Quality:** Is the code clean, readable, and well-documented?
-*   [ ] **Error Handling:** Does the system handle errors gracefully?
-*   [ ] **Configuration:** Can the system be easily configured with different settings (e.g., video resolution, DCT block size, etc.)?
+A detailed project checklist is maintained in [checklist-zqrk8.md](checklist-zqrk8.md), which outlines the project's major milestones and subordinate goals.
 
 ---
 

@@ -1,18 +1,17 @@
 #!/bin/bash
 
-PORTS=(8000 8001 8002 5002)
-LOG_FILE="impolite-shutdown.log"
+PORT=5002
+LOG_FILE="impolite-shutdown-dct-server.log"
 
-# Combine lsof commands to get all PIDs at once
-PIDS=$(lsof -t -i:8000 -i:8001 -i:8002)
+# Get PID of process using the specific port
+PIDS=$(lsof -t -i:$PORT)
 
 if [ -z "$PIDS" ]; then
-    echo "No servers found on ports 8000, 8001, or 8002."
+    echo "No server found on port $PORT."
     exit 0
 fi
 
-echo "Found the following server processes:"
-# ps -p requires PIDs without leading/trailing whitespace and with commas as separators
+echo "Found the following server processes on port $PORT:"
 ps -p $(echo $PIDS | tr ' ' ',')
 echo ""
 
@@ -22,8 +21,8 @@ kill $PIDS
 echo "Waiting 1 second..."
 sleep 1
 
-# Check which processes are still alive
-STUBBORN_PIDS=$(lsof -t -i:8000 -i:8001 -i:8002)
+# Check if processes are still alive
+STUBBORN_PIDS=$(lsof -t -i:$PORT)
 
 if [ -n "$STUBBORN_PIDS" ]; then
     echo "The following processes did not respond to SIGTERM:"
@@ -33,7 +32,7 @@ if [ -n "$STUBBORN_PIDS" ]; then
     {
         echo "---"
         echo "Timestamp: $(date)"
-        echo "The following PIDs were forcefully terminated:"
+        echo "The following PIDs were forcefully terminated on port $PORT:"
         ps -p $(echo $STUBBORN_PIDS | tr ' ' ',')
         echo "---"
     } >> "$LOG_FILE"
@@ -41,5 +40,5 @@ if [ -n "$STUBBORN_PIDS" ]; then
     kill -9 $STUBBORN_PIDS
     echo "Force kill signal sent."
 else
-    echo "All servers shut down gracefully."
+    echo "Server on port $PORT shut down gracefully."
 fi
