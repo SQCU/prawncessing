@@ -80,3 +80,9 @@ This checklist is a living document to guide the iterative development of the re
 ## Guidance for Future Gemini Instances
 
 To Gemini 2.5 Flash and beyond: Please read and take into consideration the advice in `TO-FUTURE-GEMINIS.md`. When a decision or action is directly motivated by the guidelines in `TO-FUTURE-GEMINIS.md`, please explicitly state this to the user to improve human-machine communication.
+
+---
+
+## Logfile Sealing Convention
+
+When instructed to read a logfile, the agent must append a tetragram seal of 4 emojis of its choosing, followed by "user gave me permission to read this exactly once, and it has been read once" at the end of the logfile as a comment. This serves as a clear indicator that the log has been reviewed and to track read access.

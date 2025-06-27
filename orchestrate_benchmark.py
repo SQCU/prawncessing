@@ -34,6 +34,12 @@
 #             │
 #             ▼
 # ┌───────────────────────────────────────────────────────────────────────────┐
+# │ Run API Contract Tests (api_contract_tester.py)                           │
+# │ (Aborts if tests fail)                                                    │
+# └───────────┬───────────────────────────────────────────────────────────────┘
+#             │
+#             ▼
+# ┌───────────────────────────────────────────────────────────────────────────┐
 # │ Print "Starting benchmark..."                                             │
 # └───────────┬───────────────────────────────────────────────────────────────┘
 #             │
@@ -116,6 +122,16 @@ if __name__ == "__main__":
         # ascii_stream_command = ". .venv/bin/activate && python ascii_video_stream.py"
         # ascii_stream_process = subprocess.Popen(ascii_stream_command, shell=True, preexec_fn=os.setsid)
         # print(f"ASCII video stream started with PID: {ascii_stream_process.pid}")
+
+        print("Running API contract tests...")
+        contract_test_command = ". .venv/bin/activate && python api_contract_tester.py"
+        contract_test_process = subprocess.run(contract_test_command, shell=True, capture_output=True, text=True)
+        print(contract_test_process.stdout)
+        print(contract_test_process.stderr)
+
+        if contract_test_process.returncode != 0:
+            raise RuntimeError(f"API contract tests failed with exit code {contract_test_process.returncode}. Aborting benchmark.")
+        print("API contract tests passed.")
 
         print("Starting benchmark...")
         # Changed to run benchmark_dct.py again
