@@ -13,6 +13,7 @@ These files are not useful in the current Linux development environment and crea
 ## Real-time Video Signal Processor Development Checklist
 
 A detailed project checklist is maintained in [checklist-zqrk8.md](checklist-zqrk8.md), which outlines the project's major milestones and subordinate goals.
+A detailed project checklist is maintained in [checklist-g7h3k.md](checklist-g7h3k.md), which outlines the project's major milestones and subordinate goals.
 A detailed project checklist is maintained in [checklist-prawn.md](checklist-prawn.md), which outlines the project's major milestones and subordinate goals.
 
 ---
