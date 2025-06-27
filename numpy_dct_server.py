@@ -5,7 +5,10 @@ import numpy as np
 
 app = FastAPI()
 
-class FFTRequest(BaseModel):
+class FFTFloatRequest(BaseModel):
+    data: list[list[float]]
+
+class FFTStringRequest(BaseModel):
     data: list[list[str]]
 
 @app.get("/")
@@ -13,7 +16,7 @@ async def read_root():
     return {"status": "ok"}
 
 @app.post("/fft2")
-async def calculate_fft2(request: FFTRequest):
+async def calculate_fft2(request: FFTFloatRequest):
     """
     API Contract:
     - Request Body:
@@ -42,7 +45,7 @@ async def calculate_fft2(request: FFTRequest):
         return {"error": str(e)}
 
 @app.post("/ifft2")
-async def calculate_ifft2(request: FFTRequest):
+async def calculate_ifft2(request: FFTStringRequest):
     """
     API Contract:
     - Request Body:
