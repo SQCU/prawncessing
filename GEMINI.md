@@ -13,6 +13,7 @@ These files are not useful in the current Linux development environment and crea
 ## Real-time Video Signal Processor Development Checklist
 
 A detailed project checklist is maintained in [checklist-zqrk8.md](checklist-zqrk8.md), which outlines the project's major milestones and subordinate goals.
+A detailed project checklist is maintained in [checklist-prawn.md](checklist-prawn.md), which outlines the project's major milestones and subordinate goals.
 
 ---
 
@@ -83,5 +84,11 @@ This project utilizes `uv` for Python environment and package management. All Py
 
 - **File Modification Policy:** Only modify existing files that are tracked in the Git history. Avoid making direct edits to untracked files or reference code samples, as this can introduce regressions and bypass version control.
 - **Security Check during Git Operations:** Always verify that environment files (e.g., `.env`) or any other files potentially containing API keys or sensitive information are not staged or committed during Git operations. Prioritize security and prevent accidental leakage of credentials.
+
+---
+
+## Feature Duplication for Refactoring
+
+When refactoring or reimplementing features, prioritize duplicating existing scripts or modules rather than overwriting them. This approach allows for direct comparison between the old and new implementations, facilitating regression detection and providing a safe rollback path. It is acceptable for the project to contain multiple versions of a feature during development, with older versions serving as reference points.
 
 ---
