@@ -1,3 +1,11 @@
+# ABSOLUTELY CRITICAL: ALWAYS USE THE UV VIRTUAL ENVIRONMENT
+
+**This project uses `uv` for Python environment and package management. Under no circumstances should you use the system's global Python environment or install packages globally. All Python-related commands (`python`, `pip`, `pytest`, `uv`, etc.) MUST be run within the activated virtual environment.**
+
+To activate the environment, run: `source .venv/bin/activate`
+
+---
+
 ## Zone.Identifier File Cleanup
 
 ### Issue
@@ -17,6 +25,8 @@ Multiple checklist files (e.g., `checklist-prawn.md`, `checklist-zqrk8.md`) exis
 ---
 
 ## The "Baton Pass" Protocol (v2 - Live Tracing)
+
+**CRITICAL REMINDER: All Python-related commands must be executed within the activated `uv` virtual environment (`source .venv/bin/activate`).**
 
 This protocol governs all agent interactions to ensure clear, consistent, and incremental progress. It creates a live trace of each session, providing valuable feedback even if the session is interrupted.
 

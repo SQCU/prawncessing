@@ -5,6 +5,11 @@ import requests
 app = Flask(__name__)
 CORS(app)
 
+@app.route('/')
+def visualizer_proxy():
+    r = requests.get('http://localhost:5009/')
+    return Response(r.content, content_type = r.headers['content-type'])
+
 @app.route('/video')
 def video_proxy():
     r = requests.get('http://localhost:5001/video', stream=True)

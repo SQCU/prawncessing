@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Kill processes on ports used by the CORS debug mesh
-PORTS=(5000 5001 5010)
+PORTS=(5000 5001 5009 5010)
 LOG_FILE="impolite-shutdown-cors-debug.log"
 
 if [ ${#PORTS[@]} -eq 0 ]; then

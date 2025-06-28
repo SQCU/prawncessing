@@ -16,6 +16,7 @@ pip install -r requirements.txt
 echo "Starting services..."
 python echo_service.py &
 python videostream_service.py &
+python visualizer_service.py &
 python proxy_server.py &
 
 echo "Services started."
