@@ -1,50 +1,52 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+import numpy as np
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
 
 app = Flask(__name__)
 CORS(app)
 
-import numpy as np
-
-# In a real implementation, this would be a more robust storage
-_reference_frame_data = ','.join(map(str, np.zeros(32*32, dtype=np.uint8)))
+# In-memory store for the reference frame
+_reference_frame_data = None
 
 def _set_reference_frame_data(frame_data: str) -> str:
     """
-    Pure function to set the reference frame data.
-    Converts the input string to a numpy array for internal consistency.
+    Pure function to validate and prepare reference frame data.
     """
-    # Convert the input string to a numpy array
-    frame_array = np.fromstring(frame_data, sep=',')
-    
-    # For now, we just return the string representation of the array
-    return ','.join(map(str, frame_array))
+    try:
+        # Validate that the data can be converted to a numpy array
+        frame_array = np.fromstring(frame_data, sep=',')
+        return ','.join(map(str, frame_array))
+    except Exception as e:
+        logging.error(f"Error processing reference frame data: {e}")
+        raise
 
 @app.route('/set_reference_frame', methods=['POST'])
 def set_reference_frame():
     global _reference_frame_data
     data = request.json
-    frame_data = data.get('frame_data')
-    if not frame_data:
+    if not data or 'frame_data' not in data:
         return jsonify({"error": "Invalid request: 'frame_data' is required."}), 400
 
-    _reference_frame_data = _set_reference_frame_data(frame_data)
-    print(f"Reference frame set.")
-    return jsonify({"status": "reference frame set"})
+    frame_data = data.get('frame_data')
+    
+    try:
+        _reference_frame_data = _set_reference_frame_data(frame_data)
+        logging.info(f"Reference frame set.")
+        return jsonify({"status": "reference frame set"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/get_reference_frame', methods=['GET'])
 def get_reference_frame():
-    return jsonify({"status": "success", "reference_frame": _reference_frame_data})
-
-@app.route('/latest_reference_frame', methods=['GET'])
-def get_latest_reference_frame():
-    """
-    Returns the latest reference frame data.
-    """
-    return jsonify({"status": "success", "latest_reference_frame": _reference_frame_data})
+    if _reference_frame_data is not None:
+        return jsonify({"status": "success", "reference_frame": _reference_frame_data}), 200
+    else:
+        return jsonify({"error": "Reference frame not set"}), 404
 
 if __name__ == '__main__':
-    app.run(port=5003)
-
-# This service is typically started by `functional_processor/start_functional_processors.sh` or `start_functional_processors_orchestration.sh`.
+    app.run(host='0.0.0.0', port=5003)
 

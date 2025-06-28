@@ -3,3 +3,6 @@ requests
 flask-cors
 numpy
 scipy
+pytest
+playwright
+mock

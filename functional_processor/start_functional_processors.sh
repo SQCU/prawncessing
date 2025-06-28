@@ -1,34 +1,27 @@
 #!/bin/bash
 
-# This script starts all individual functional processor services in the background.
-# It first calls the interrupt script to ensure a clean slate, preventing hung processes.
-#
-# To run: `./start_functional_processors.sh`
-# To stop: Use the `interrupt_functional_processors.sh` script.
+# Make kill_ports.sh executable
+chmod +x kill_ports.sh
 
-# Navigate to the script's directory
-cd "$(dirname "$0")"
+# Run the kill script to clear any running services
+./kill_ports.sh 8000 8080 5002 5003 5004 5005 5006
 
-echo "Interrupting any existing services to ensure a clean start..."
-# THIS IS NOT OPTIONAL. All services are forcefully restarted on every initialization.
-# There are no exceptions to this behavior.
-./interrupt_functional_processors.sh
-echo "Services interrupted."
+# Activate the virtual environment
+source ../.venv/bin/activate
 
-echo "Starting DCT Service (port 5002)..."
+# Install dependencies
+uv pip install -r requirements.txt
+
+# Start the services in the background
+echo "Starting services..."
 nohup uv run python dct_service.py > logs/dct_service.log 2>&1 &
-
-echo "Starting Reference Frame Service (port 5003)..."
 nohup uv run python reference_frame_service.py > logs/reference_frame_service.log 2>&1 &
-
-echo "Starting Difference Service (port 5004)..."
 nohup uv run python difference_service.py > logs/difference_service.log 2>&1 &
-
-echo "Starting Accumulator Service (port 5005)..."
 nohup uv run python accumulator_service.py > logs/accumulator_service.log 2>&1 &
-
-echo "Starting Orchestration Service (port 5006)..."
 nohup uv run python orchestration_service.py > logs/orchestration_service.log 2>&1 &
+nohup uv run python proxy_server.py > logs/proxy_server.log 2>&1 &
+# I will create this visualizer service next
+nohup uv run python visualizer_service.py > logs/visualizer_service.log 2>&1 &
 
-echo "All functional processor services have been launched in the background."
-echo "Check their respective .log files in the 'logs/' directory for output."
+
+echo "Services started."
