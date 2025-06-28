@@ -30,8 +30,8 @@ def calculate_difference():
     global _latest_difference_data
     # Placeholder for difference calculation
     data = request.json
-    dct1 = data.get('dct1')
-    dct2 = data.get('dct2')
+    dct1 = data.get('dct_A')
+    dct2 = data.get('dct_B')
     # In a real implementation, calculate the difference between DCTs
     print(f"Calculating difference between {dct1} and {dct2}")
     difference_data = _calculate_dct_difference(dct1, dct2)

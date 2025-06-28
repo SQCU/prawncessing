@@ -1,17 +1,17 @@
 #!/bin/bash
 
-# This script starts all individual functional processor services in the background
-# using nohup. This ensures they continue to run even if the terminal session is closed.
-# Their output will be redirected to nohup.out in their respective directories.
+# This script starts all individual functional processor services in the background.
+# It first calls the interrupt script to ensure a clean slate, preventing hung processes.
 #
 # To run: `./start_functional_processors.sh`
-# To stop: Use the generic `../kill_ports.sh 5002 5003 5004 5005 5006` or `../interrupt_functional_processors.sh`.
-# This script is designed to be used with the corresponding kill scripts for proper shutdown.
-#
-# Usage: ./start_functional_processors.sh
+# To stop: Use the `interrupt_functional_processors.sh` script.
 
-# Navigate to the functional_processor directory
+# Navigate to the script's directory
 cd "$(dirname "$0")"
+
+echo "Interrupting any existing services to ensure a clean start..."
+./interrupt_functional_processors.sh
+echo "Services interrupted."
 
 echo "Starting DCT Service (port 5002)..."
 nohup uv run python dct_service.py > logs/dct_service.log 2>&1 &

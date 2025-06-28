@@ -7,7 +7,7 @@ CORS(app)
 import numpy as np
 
 # In a real implementation, this would be a more robust storage
-_reference_frame_data = None
+_reference_frame_data = ','.join(map(str, np.zeros(32*32, dtype=np.uint8)))
 
 def _set_reference_frame_data(frame_data: str) -> str:
     """

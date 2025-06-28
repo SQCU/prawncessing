@@ -8,10 +8,14 @@
 # IF YOU ARE TEMPTED TO ADD STATIC FILE SERVING TO THIS PROXY, PLEASE
 # RESIST THE URGE AND SET UP A PROPER STATIC FILE SERVER INSTEAD.
 
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify, Response, send_from_directory
 from flask_cors import CORS
 import requests
 import logging
+import base64
+from PIL import Image
+import numpy as np
+import io
 
 
 # Configure logging
@@ -37,43 +41,144 @@ SERVICE_MAP = {
 
 
 
-@app.route('/<service_name>/<path:subpath>', methods=['GET', 'POST', 'PUT', 'DELETE'])
-def proxy_request(service_name, subpath):
-    base_url = SERVICE_MAP.get(service_name)
-    if not base_url:
-        logging.error(f"Unknown service: {service_name}")
-        return jsonify({"error": "Unknown service"}), 404
+@app.route('/api/v1/process-frame', methods=['POST'])
+def process_frame():
+    """
+    This is the core orchestration endpoint. It receives an image from the client,
+    sends it through the entire backend processing pipeline, and returns the
+    final processed image. This function implements the logic defined in the
+    `DCT-DIFF-DELAY-DATAMOSH.png` architectural schema.
+    """
+    logging.info("Received request at /api/v1/process-frame")
 
-    target_url = f"{base_url}/{subpath}"
-    method = request.method
-    headers = {key: value for key, value in request.headers if key.lower() not in ['host', 'content-length']}
-    data = request.get_data() if method in ['POST', 'PUT'] else None
+    # 1. Get the image data from the client request
+    try:
+        client_data = request.get_json()
+        if not client_data or 'image' not in client_data:
+            logging.error("Invalid request: 'image' field missing.")
+            return jsonify({"error": "Invalid request: 'image' field missing."}), 400
+        image_data_b64 = client_data['image']
+        # Decode the Base64 string and open it as an image
+        image_bytes = base64.b64decode(image_data_b64)
+        image = Image.open(io.BytesIO(image_bytes)).convert('L') # Convert to grayscale
+        image_shape = np.array(image).shape
+        image_array = np.array(image)
+        # Flatten the array and convert it to a comma-separated string
+        image_data = ','.join(map(str, image_array.flatten()))
+    except Exception as e:
+        logging.error(f"Failed to parse client request: {e}")
+        return jsonify({"error": f"Invalid request format: {e}"}), 400
 
-    logging.info(f"Proxying {method} request to {target_url}")
+    # --- Backend Service Orchestration ---
+    # This is the sequence of internal, server-to-server HTTP requests
+    # that constitute the full data processing pipeline.
 
     try:
-        resp = requests.request(method, target_url, headers=headers, data=data, params=request.args, stream=True)
+        # Step 2: Send image to DCT Service
+        logging.info("Forwarding to DCT Service for main image...")
+        dct_response = requests.post(
+            f"{SERVICE_MAP['dct_service']}/forward_dct",
+            json={"image_data": image_data, "frame_id": "main"}
+        )
+        dct_response.raise_for_status()
+        dct_result = dct_response.json()['dct_data']
 
-        # Create a new response object
-        response = Response(resp.iter_content(chunk_size=8192), status=resp.status_code)
+        # Step 3: Get reference frame from Reference Frame Service
+        # (This assumes the reference frame service provides a reference frame)
+        logging.info("Forwarding to Reference Frame Service...")
+        ref_frame_response = requests.get(f"{SERVICE_MAP['reference_frame_service']}/get_reference_frame")
+        ref_frame_response.raise_for_status()
+        ref_frame_result = ref_frame_response.json()
 
-        # Copy headers from the backend response to the proxy response
-        excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
-        for key, value in resp.headers.items():
-            if key.lower() not in excluded_headers:
-                response.headers[key] = value
+        # Step 4: Send reference frame to DCT service
+        logging.info("Forwarding reference frame to DCT Service...")
+        ref_dct_response = requests.post(
+            f"{SERVICE_MAP['dct_service']}/forward_dct",
+            json={"image_data": ref_frame_result['reference_frame'], "frame_id": "reference"}
+        )
+        ref_dct_response.raise_for_status()
+        ref_dct_result = ref_dct_response.json()['dct_data']
+
+        # Step 5: Send both DCTs to Difference Service
+        logging.info("Forwarding to Difference Service...")
+        diff_payload = {
+            "dct_A": dct_result,
+            "dct_B": ref_dct_result,
+            "frame_id": "difference"
+        }
+        diff_response = requests.post(
+            f"{SERVICE_MAP['difference_service']}/calculate_difference",
+            json=diff_payload
+        )
+        diff_response.raise_for_status()
+        diff_result = diff_response.json()['difference_data']
+
+        # Step 6: Send difference and original DCT to Accumulator Service
+        logging.info("Forwarding to Accumulator Service...")
+        accum_payload = {
+            "frame_part": diff_result
+        }
+        accum_response = requests.post(
+            f"{SERVICE_MAP['accumulator_service']}/accumulate_frame",
+            json=accum_payload
+        )
+        accum_response.raise_for_status()
+        get_accum_response = requests.get(f"{SERVICE_MAP['accumulator_service']}/get_accumulated_frame")
+        get_accum_response.raise_for_status()
+        accum_result = get_accum_response.json()['accumulated_frame']
+
+        # Step 7: Send accumulated result to Inverse DCT (which is the same DCT service)
+        logging.info("Forwarding to Inverse DCT Service...")
+        idct_response = requests.post(
+            f"{SERVICE_MAP['dct_service']}/inverse_dct",
+            json={"dct_data": accum_result, "frame_id": "final"}
+        )
+        idct_response.raise_for_status()
+        final_image_data = idct_response.json()['image_data']
+
+        # Convert the comma-separated string back to an image
+        final_image_array = np.fromstring(final_image_data, sep=',')
+        # Reshape the array to the original image dimensions.
+        final_image_array = final_image_array.reshape(image_shape)
+        final_image = Image.fromarray(final_image_array.astype(np.uint8))
         
-        # Add CORS headers to the proxy response
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Access-Control-Allow-Methods'] = '*'
-        response.headers['Access-Control-Allow-Headers'] = '*'
+        # Save the image to a byte buffer
+        buf = io.BytesIO()
+        final_image.save(buf, format='PNG')
+        buf.seek(0)
 
-        return response
+        return Response(buf, mimetype='image/png')
+
     except requests.exceptions.RequestException as e:
-        logging.error(f"Proxy communication error with {base_url}: {e}")
-        return jsonify({"error": f"Proxy communication error: {e}"}), 500
+        # This is a catch-all for network errors during backend communication.
+        logging.error(f"A backend service was unreachable: {e}")
+        return jsonify({"error": f"A backend service was unreachable: {e}"}), 502
+    except Exception as e:
+        # This catches other unexpected errors during the orchestration.
+        logging.error(f"An unexpected error occurred during orchestration: {e}")
+        return jsonify({"error": f"An unexpected error occurred: {e}"}), 500
+
+
+@app.route('/')
+def serve_index():
+    """
+    Serves the main visualizer HTML file. This is the entry point for the
+    web-based client.
+    """
+    logging.info("Serving index.html")
+    return send_from_directory('.', 'visualizer_v3.html')
+
+@app.route('/<path:path>')
+def serve_static_files(path):
+    """
+    Serves any other static files (like JavaScript, CSS) requested by the
+    visualizer.
+    """
+    logging.info(f"Serving static file: {path}")
+    return send_from_directory('.', path)
 
 if __name__ == '__main__':
     app.run(port=5008) # Proxy server will run on port 5008
+
 
 # This server is typically started by `start_visualizer_services.sh`.

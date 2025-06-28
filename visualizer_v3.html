@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Visualizer V3</title>
+    <style>
+        body { font-family: sans-serif; }
+        #container { display: flex; gap: 20px; }
+        #input, #output { border: 1px solid black; }
+    </style>
+</head>
+<body>
+    <h1>Visualizer V3</h1>
+    <div id="container">
+        <div>
+            <h2>Input</h2>
+            <video id="video" width="640" height="480" autoplay></video>
+            <canvas id="input" width="640" height="480"></canvas>
+        </div>
+        <div>
+            <h2>Output</h2>
+            <canvas id="output" width="640" height="480"></canvas>
+        </div>
+    </div>
+    <script src="visualizer_v3.js"></script>
+</body>
+</html>
