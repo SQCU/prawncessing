@@ -2,7 +2,7 @@ import pytest
 from PIL import Image, ImageDraw
 import io
 import random
-from echo_service import app
+from cors_debug_mesh.echo_service import app
 
 @pytest.fixture
 def client():

@@ -3,3 +3,5 @@ mock
 psutil
 flask
 Pillow
+playwright
+flask-cors
