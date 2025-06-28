@@ -1,4 +1,4 @@
-Flask
-Pillow
+flask
+flask_cors
 requests
-Flask-Cors
+psutil

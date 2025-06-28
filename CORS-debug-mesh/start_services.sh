@@ -9,6 +9,9 @@ chmod +x kill_ports.sh
 # Activate the virtual environment
 source ../.venv/bin/activate
 
+# Install dependencies
+pip install -r requirements.txt
+
 # Start the services in the background
 echo "Starting services..."
 python echo_service.py &
