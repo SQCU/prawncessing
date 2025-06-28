@@ -5,17 +5,51 @@
 </head>
 <body>
     <h1>CORS Debug Visualizer</h1>
-    <img id="video-stream" src="" width="400" height="300">
+    <canvas id="video-canvas" width="400" height="300" style="border:1px solid #000;"></canvas>
+    <canvas id="processed-canvas" width="400" height="300" style="border:1px solid #000;"></canvas>
 
     <script>
-        const videoStream = document.getElementById('video-stream');
+        const videoStream = new Image();
+        const videoCanvas = document.getElementById('video-canvas');
+        const processedCanvas = document.getElementById('processed-canvas');
+        const videoCtx = videoCanvas.getContext('2d');
+        const processedCtx = processedCanvas.getContext('2d');
         const streamUrl = 'http://localhost:5000/video';
+        const echoUrl = 'http://localhost:5010/echo';
+
+        videoStream.crossOrigin = "Anonymous"; // Important for canvas operations
 
         function refreshStream() {
             videoStream.src = streamUrl + '?' + new Date().getTime();
         }
 
-        setInterval(refreshStream, 100); // Refresh every 100ms (10 FPS)
+        videoStream.onload = () => {
+            videoCtx.drawImage(videoStream, 0, 0, videoCanvas.width, videoCanvas.height);
+            sendFrameForProcessing();
+        };
+
+        function sendFrameForProcessing() {
+            videoCanvas.toBlob(blob => {
+                const formData = new FormData();
+                formData.append('image', blob, 'frame.png');
+
+                fetch(echoUrl, {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.blob())
+                .then(processedBlob => {
+                    const processedImage = new Image();
+                    processedImage.onload = () => {
+                        processedCtx.drawImage(processedImage, 0, 0, processedCanvas.width, processedCanvas.height);
+                    };
+                    processedImage.src = URL.createObjectURL(processedBlob);
+                })
+                .catch(error => console.error('Error processing frame:', error));
+            }, 'image/png');
+        }
+
+        setInterval(refreshStream, 250); // Refresh every 250ms (4 FPS)
     </script>
 </body>
 </html>

@@ -5,21 +5,17 @@
 # then starts the services in the background using nohup.
 #
 # To run: `./start_visualizer_services.sh`
-# To stop: Use the generic `./kill_ports.sh 5007 8003 5008` or other specific `interrupt_*.sh` scripts.
+# To stop: Use the generic `./kill_ports.sh 5007 8003 5008 5010` or other specific `interrupt_*.sh` scripts.
 # This script is designed to be used with the corresponding kill scripts for proper shutdown.
 
 # Define ports for visualizer and mock video stream
-VISUALIZER_PORT=5007
 MOCK_VIDEO_PORT=8003
 PROXY_PORT=5008
+ECHO_PORT=5010
 
 # Kill any existing processes on these ports
 echo "Stopping existing visualizer and mock video stream services..."
-./kill_ports.sh $VISUALIZER_PORT $MOCK_VIDEO_PORT $PROXY_PORT
-
-# Start the visualizer server
-echo "Starting visualizer server on port $VISUALIZER_PORT..."
-nohup uv run python /home/bigboi/prawncessing/visualizer_server.py > visualizer_server.log 2>&1 &
+./kill_ports.sh $MOCK_VIDEO_PORT $PROXY_PORT $ECHO_PORT
 
 # Start the video stream mock server
 echo "Starting video stream mock server on port $MOCK_VIDEO_PORT..."
@@ -28,6 +24,11 @@ nohup uv run python /home/bigboi/prawncessing/videostream_mock_server.py > video
 # Start the proxy server
 echo "Starting proxy server on port $PROXY_PORT..."
 nohup uv run python /home/bigboi/prawncessing/proxy_server.py > proxy_server.log 2>&1 &
+
+# Start the echo server
+echo "Starting echo server on port $ECHO_PORT..."
+nohup uv run python /home/bigboi/prawncessing/CORS-debug-mesh/echo_service.py > echo_service.log 2>&1 &
+
 
 echo "Visualizer services started in the background."
 
