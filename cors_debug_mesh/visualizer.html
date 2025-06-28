@@ -5,24 +5,30 @@
 </head>
 <body>
     <h1>CORS Debug Visualizer</h1>
-    <img id="video-stream" src="http://localhost:5001/video" width="400" height="300" style="border:1px solid #000;">
+    <canvas id="video-canvas" width="400" height="300" style="border:1px solid #000;"></canvas>
     <canvas id="processed-canvas" width="400" height="300" style="border:1px solid #000;"></canvas>
 
     <script>
-        const videoStream = document.getElementById('video-stream');
+        const videoStream = new Image();
+        const videoCanvas = document.getElementById('video-canvas');
         const processedCanvas = document.getElementById('processed-canvas');
+        const videoCtx = videoCanvas.getContext('2d');
         const processedCtx = processedCanvas.getContext('2d');
+        const streamUrl = 'http://localhost:5000/video';
         const echoUrl = 'http://localhost:5010/echo';
 
         videoStream.crossOrigin = "Anonymous"; // Important for canvas operations
 
-        function sendFrameForProcessing() {
-            const videoCanvas = document.createElement('canvas');
-            videoCanvas.width = videoStream.width;
-            videoCanvas.height = videoStream.height;
-            const videoCtx = videoCanvas.getContext('2d');
-            videoCtx.drawImage(videoStream, 0, 0, videoCanvas.width, videoCanvas.height);
+        function refreshStream() {
+            videoStream.src = streamUrl + '?' + new Date().getTime();
+        }
 
+        videoStream.onload = () => {
+            videoCtx.drawImage(videoStream, 0, 0, videoCanvas.width, videoCanvas.height);
+            sendFrameForProcessing();
+        };
+
+        function sendFrameForProcessing() {
             videoCanvas.toBlob(blob => {
                 const formData = new FormData();
                 formData.append('image', blob, 'frame.png');
@@ -43,7 +49,7 @@
             }, 'image/png');
         }
 
-        setInterval(sendFrameForProcessing, 250); // Process every 250ms (4 FPS)
+        setInterval(refreshStream, 250); // Refresh every 250ms (4 FPS)
     </script>
 </body>
 </html>
