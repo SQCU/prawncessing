@@ -24,29 +24,28 @@ def monitor_usage(func):
 def video_feed():
     @monitor_usage
     def generate():
-        while True:
-            # Create a blank image
-            img = Image.new('RGB', (400, 300), color = 'black')
-            d = ImageDraw.Draw(img)
+        # Create a blank image
+        img = Image.new('RGB', (400, 300), color = 'black')
+        d = ImageDraw.Draw(img)
 
-            # Get current time
-            now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+        # Get current time
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
 
-            # Draw text
-            try:
-                font = ImageFont.truetype("arial.ttf", 20)
-            except IOError:
-                font = ImageFont.load_default()
-            d.text((10,10), now, fill=(255,255,0), font=font)
+        # Draw text
+        try:
+            font = ImageFont.truetype("arial.ttf", 20)
+        except IOError:
+            font = ImageFont.load_default()
+        d.text((10,10), now, fill=(255,255,0), font=font)
 
-            # Save image to a byte stream
-            img_io = io.BytesIO()
-            img.save(img_io, 'JPEG', quality=70)
-            img_io.seek(0)
-            
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + img_io.read() + b'\r\n')
-            time.sleep(0.1)
+        # Save image to a byte stream
+        img_io = io.BytesIO()
+        img.save(img_io, 'JPEG', quality=70)
+        img_io.seek(0)
+        
+        yield (b'--frame\r\n'\
+                   b'Content-Type: image/jpeg\r\n\r\n' + img_io.read() + b'\r\n')\
+            # time.sleep(0.1)
 
     return Response(generate(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')

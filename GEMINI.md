@@ -146,6 +146,16 @@ Refer to `SCRIPT_DOCUMENTATION.md` for details on launch scripts.
 
 ---
 
+## Scripting and Logging Standards
+
+All shell scripts created for automation (e.g., starting services, running tests) **must** adhere to the following standards:
+
+1.  **Environment Activation:** Every script that executes Python code must begin by activating the `uv` virtual environment using `source .venv/bin/activate`. This ensures all commands run in the correct, isolated context with the proper dependencies.
+2.  **Log Redirection:** All output (both `stdout` and `stderr`) from automated scripts must be redirected to a dedicated log file. Log files should be timestamped to avoid overwriting previous results. Directing output to the terminal is forbidden for automated tasks, as it is not a reproducible or auditable practice. Example: `bash my_script.sh > >(tee -a my_script_$(date +%Y%m%d_%H%M%S).log) 2>&1`
+3.  **Dedicated Log Directories:** Scripts should place their log files in a designated `logs` subdirectory within their respective project folder (e.g., `cors_debug_mesh/logs/`, `functional_processor/logs/`).
+
+---
+
 ## Environment Debugging: The Case of the Missing Playwright
 
 A recent session involved significant time spent debugging a `ModuleNotFoundError: No module named 'playwright'` error, even after `uv pip install playwright` reported a successful installation. This documentation clarifies the cause and the required operational procedure to prevent this in the future.

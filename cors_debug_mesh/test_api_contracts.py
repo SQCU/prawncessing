@@ -68,22 +68,22 @@ def test_videostream_service_contract():
     assert 'multipart/x-mixed-replace' in response.headers['Content-Type']
 
     # 2. Check if the stream contains valid JPEG images
-    content = b''
-    for chunk in response.iter_content(chunk_size=1024):
-        content += chunk
-        if b'\r\n\r\n' in content:
-            parts = content.split(b'\r\n\r\n')
-            if len(parts) > 1:
-                image_data = parts[1]
-                if image_data.endswith(b'\r\n--frame'): # a full frame is received
-                    image_bytes = image_data[:-len(b'\r\n--frame')]
-                    try:
-                        img = Image.open(io.BytesIO(image_bytes))
-                        assert img.format == 'JPEG'
-                        # If we get one valid JPEG, the contract is likely met.
-                        return
-                    except Exception as e:
-                        pytest.fail(f"Stream did not contain a valid JPEG image: {e}")
-    
-    pytest.fail("Did not receive a full frame from the video stream.")
+    content = response.content
+    boundary = b'--frame'
+    if boundary in content:
+        parts = content.split(boundary)
+        # The first part is empty, the second part contains the headers and image
+        if len(parts) > 1 and b'Content-Type: image/jpeg' in parts[1]:
+            image_data_parts = parts[1].split(b'\r\n\r\n')
+            if len(image_data_parts) > 1:
+                image_bytes = image_data_parts[1].strip() # Strip trailing whitespace/newlines
+                try:
+                    img = Image.open(io.BytesIO(image_bytes))
+                    assert img.format == 'JPEG'
+                    # If we get one valid JPEG, the contract is met.
+                    return
+                except Exception as e:
+                    pytest.fail(f"Stream did not contain a valid JPEG image: {e}")
+
+    pytest.fail("Did not receive a valid JPEG frame from the video stream.")
 
