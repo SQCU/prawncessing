@@ -41,6 +41,7 @@ This protocol governs all agent interactions to ensure clear, consistent, and in
 
 ### 5. Checklist & Context Reset
 *   **Update:** The agent updates the main `checklist.md` to reflect the completed work.
+*   **Commit Handoff:** The agent **must** ensure the session's handoff report (`handoffs/<timestamp>.md`) is staged and committed to the Git repository. This is not optional and serves as a permanent record of the work performed.
 *   **Reset:** The agent's final act is to announce the completion of the handoff report and checklist update, and then request a full context reset from the user.
 
 ---
@@ -96,6 +97,36 @@ During this session, new interaction protocols were improvised and formalized to
     *   **Commit:** All changes related to the debriefing are committed.
 
 ---
+
+---
+
+## Advanced Debugging and Environment Management
+
+This section documents a set of advanced techniques that were successfully employed to diagnose and resolve a critical, multi-faceted regression in the web visualizer stack.
+
+### Core Problem
+
+The web visualizer, which should have been accessible via a proxy server on port 5008, was completely unresponsive. Initial checks showed the proxy was not serving content, and browser connections were being refused.
+
+### Solution and Key Resources Utilized
+
+The resolution required a systematic approach that went beyond simple code inspection. The following resources and methods were critical:
+
+1.  **Adept `uv` Virtual Environment Management:** The root cause of the server failure was a series of missing Python dependencies (`flask`, `Pillow`). The problem was resolved by correctly using the project's established Python environment manager, `uv`. This involved:
+    *   Activating the virtual environment (`source .venv/bin/activate`) before executing Python commands.
+    *   Installing dependencies from `requirements.txt` files (`uv pip install -r ...`).
+    *   Adding new dependencies and ensuring they were persisted (`uv pip install Pillow && uv pip freeze > requirements.txt`).
+    *   This demonstrates proper stewardship over project dependencies, which is crucial for reproducibility and stability.
+
+2.  **Browser Automation for DOM and Network-level Verification:** Instead of relying on simple `curl` calls, which would only confirm basic network connectivity, **Playwright** was installed and used to perform automated browser testing. This was a critical step because:
+    *   It allowed for testing the application *after* the DOM was loaded and JavaScript had executed.
+    *   It provided direct access to the browser's console, which is essential for catching client-side errors.
+    *   It could programmatically verify the final state of the application (e.g., by checking the page title), confirming not just that the server responded, but that it served the *correct* application.
+    *   The initial Playwright test immediately revealed a `net::ERR_CONNECTION_REFUSED` error, definitively proving the issue was a server crash, not a routing or CORS problem.
+
+3.  **Iterative Log Analysis:** The `proxy_server.log` file was the primary source of truth for identifying the server-side errors. Each time a dependency was added and the server was restarted, the log was re-examined to find the *next* `ModuleNotFoundError`, guiding the iterative debugging process until all dependencies were met.
+
+This combination of robust environment management, sophisticated browser-level testing, and systematic log analysis represents a powerful workflow for debugging complex, full-stack application issues.
 
 ## Launch Script Documentation
 
