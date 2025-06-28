@@ -5,3 +5,4 @@ flask
 Pillow
 playwright
 flask-cors
+pytest-playwright
