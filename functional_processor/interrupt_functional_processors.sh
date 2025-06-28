@@ -1,6 +1,8 @@
 #!/bin/bash
 
-# This script specifically targets functional processor services.
+# This script kills all processes on the ports used by the functional processor services.
+# This behavior is not optional, and there are no exceptions to service restarts.
+# This script is called by start_functional_processors.sh to ensure a clean slate.
 # Note: For a more generic solution, consider using `kill_ports.sh` with the relevant ports.
 PORTS=(5001 5002 5003 5004 5005 5006)
 LOG_FILE="impolite-shutdown-functional-processors.log"

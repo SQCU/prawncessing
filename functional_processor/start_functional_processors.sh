@@ -10,6 +10,8 @@
 cd "$(dirname "$0")"
 
 echo "Interrupting any existing services to ensure a clean start..."
+# THIS IS NOT OPTIONAL. All services are forcefully restarted on every initialization.
+# There are no exceptions to this behavior.
 ./interrupt_functional_processors.sh
 echo "Services interrupted."
 

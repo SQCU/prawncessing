@@ -31,8 +31,7 @@ SERVICE_MAP = {
     "reference_frame_service": "http://localhost:5003",
     "difference_service": "http://localhost:5004",
     "accumulator_service": "http://localhost:5005",
-    "orchestration_service": "http://localhost:5006",
-    "visualizer_server": "http://localhost:5007" # The server for static visualizer files
+    "orchestration_service": "http://localhost:5006"
 }
 
 
