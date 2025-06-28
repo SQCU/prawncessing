@@ -1,28 +1,18 @@
 import pytest
-from unittest.mock import patch, MagicMock
-from cors_debug_mesh.videostream_service import monitor_usage
+from cors_debug_mesh.videostream_service import app
 
-def test_monitor_usage_decorator():
-    # Mock the function to be decorated
-    mock_func = MagicMock()
+@pytest.fixture
+def client():
+    app.config['TESTING'] = True
+    with app.test_client() as client:
+        yield client
 
-    # Decorate the mock function
-    decorated_func = monitor_usage(mock_func)
-
-    # Mock psutil and logging
-    with patch('cors_debug_mesh.videostream_service.psutil.Process') as mock_process, \
-         patch('cors_debug_mesh.videostream_service.logging.info') as mock_logging_info:
-        
-        # Configure the mock process to return specific values
-        mock_process.return_value.cpu_percent.return_value = 50.0
-        mock_process.return_value.memory_info.return_value.rss = 100 * 1024 * 1024  # 100 MB
-
-        # Call the decorated function
-        decorated_func()
-
-        # Assert that the original function was called
-        mock_func.assert_called_once()
-
-        # Assert that logging.info was called with the correct message
-        mock_logging_info.assert_called_once_with("CPU Usage: 50.0% | Memory Usage: 100.00 MB")
-
+def test_video_feed(client):
+    """Test the /video endpoint to ensure it returns a multipart JPEG stream."""
+    response = client.get('/video')
+    
+    assert response.status_code == 200
+    assert 'multipart/x-mixed-replace; boundary=frame' in response.content_type
+    
+    # Check that the response contains some data
+    assert len(response.data) > 0

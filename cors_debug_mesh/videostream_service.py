@@ -4,6 +4,7 @@ import datetime
 import io
 import psutil
 import logging
+import time
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
@@ -45,6 +46,7 @@ def video_feed():
             
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + img_io.read() + b'\r\n')
+            time.sleep(0.1)
 
     return Response(generate(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
