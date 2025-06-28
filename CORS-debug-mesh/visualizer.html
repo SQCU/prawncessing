@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CORS Debug Visualizer</title>
+</head>
+<body>
+    <h1>CORS Debug Visualizer</h1>
+    <img id="video-stream" src="" width="400" height="300">
+
+    <script>
+        const videoStream = document.getElementById('video-stream');
+        const streamUrl = 'http://localhost:5000/video';
+
+        function refreshStream() {
+            videoStream.src = streamUrl + '?' + new Date().getTime();
+        }
+
+        setInterval(refreshStream, 100); // Refresh every 100ms (10 FPS)
+    </script>
+</body>
+</html>
