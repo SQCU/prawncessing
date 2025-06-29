@@ -1,0 +1,62 @@
+#!/bin/bash
+set -e
+
+# ======================================================================================
+# TEST EXECUTION SCRIPT
+#
+# This script embodies the project's standards for robust, auditable testing:
+#
+# 1.  **Centralized Logging:** All output (stdout and stderr) is redirected to a
+#     timestamped log file in the `logs/` directory. This creates a permanent,
+#     reviewable record of every test run.
+#
+# 2.  **Environment Isolation:** It explicitly activates the project's virtual
+#     environment (`.venv`) to ensure that the correct versions of Python
+#     and all dependencies are used, preventing "module not found" errors.
+#
+# 3.  **Dependency Management:** It installs dependencies from a dedicated
+#     `requirements-test.txt` file, ensuring that the test environment is
+#     reproducible.
+#
+# 4.  **Fast-Halting Execution:** It runs `pytest` with a global timeout (`--timeout=60`).
+#     This is a critical safety measure to prevent the entire test suite from
+#     hanging indefinitely if a single test encounters a deadlock or an
+#     unresponsive service.
+#
+# NOTE: If this script hangs, it is likely due to an issue with the services
+#       under test, not a failure of the pre-kill script. The services may not
+#       be starting correctly.
+# ======================================================================================
+
+# Set up logging
+LOG_DIR="cors_debug_mesh/logs"
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+LOG_FILE="$LOG_DIR/run_tests_$TIMESTAMP.log"
+
+# Ensure log directory exists
+mkdir -p "$LOG_DIR"
+
+# Group all commands and redirect their combined output to the log file.
+{
+    echo "Log file: $LOG_FILE"
+    echo "---"
+
+    # Activate the virtual environment
+    echo "Activating virtual environment..."
+    source .venv/bin/activate
+
+    # Wait for services to be ready
+    echo "Waiting for services to initialize..."
+    python cors_debug_mesh/wait_for_services.py 5000 5001 5009 5010
+
+    # Install test dependencies
+    echo "Installing test dependencies from cors_debug_mesh/requirements-test.txt..."
+    uv pip install -r cors_debug_mesh/requirements-test.txt
+
+    # Run pytest with a 60-second timeout to prevent hangs.
+    echo "Running tests with a 60s timeout..."
+    pytest cors_debug_mesh/ --timeout=60
+
+} >> "$LOG_FILE" 2>&1
+
+
