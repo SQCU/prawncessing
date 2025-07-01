@@ -9,7 +9,7 @@ from multiprocessing import Queue
 from dct_refurb.core_logic.image_generation import generate_image
 
 class WorkerService:
-    def __init__(self, name, mapper_address="tcp://127.0.0.1:5555"):
+    def __init__(self, name, mapper_address="tcp://127.0.0.1:5588"):
         self.name = name
         self.pid = os.getpid()
         self.mapper_address = mapper_address
@@ -145,3 +145,16 @@ class WorkerService:
             return peer_response['status'] == 'ok'
         
         return peer_response
+
+    def list_peers(self):
+        """Requests a list of all peers from the mapper."""
+        try:
+            req_socket = self.context.socket(zmq.REQ)
+            req_socket.connect(self.mapper_address)
+            req_socket.send_json({"command": "LIST_PEERS", "payload": {}})
+            response = req_socket.recv_json()
+            req_socket.close()
+            return response
+        except Exception as e:
+            print(f"[{self.name}] Could not list peers: {e}")
+            return {"status": "error", "message": str(e)}

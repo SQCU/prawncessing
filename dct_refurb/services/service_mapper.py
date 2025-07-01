@@ -4,7 +4,7 @@ import json
 import time
 
 class ServiceMapper:
-    def __init__(self, host="127.0.0.1", port=5555):
+    def __init__(self, host="127.0.0.1", port=5588):
         self.registry = {}
         self.context = zmq.Context()
         self.socket = self.context.socket(zmq.REP)

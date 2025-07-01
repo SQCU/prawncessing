@@ -1,38 +1,157 @@
-
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Real-time Video Stream</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-time Service Mesh Monitor</title>
     <style>
-        body { font-family: sans-serif; background-color: #111; color: #eee; }
-        #video { border: 2px solid #444; }
+        body {
+            font-family: 'Menlo', 'Consolas', 'monospace';
+            background-color: #1a1a1a;
+            color: #f0f0f0;
+            margin: 0;
+            padding: 1rem;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        h1 {
+            text-align: center;
+            color: #00ff9d;
+            margin-bottom: 1rem;
+            font-weight: 300;
+            letter-spacing: 2px;
+        }
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            flex-grow: 1;
+            min-height: 0; /* Important for flexbox children with overflow */
+        }
+        .video-container, .terminal-container {
+            background-color: #252525;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 1rem;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        .video-container {
+            flex: 2 1 400px; /* Flex-grow, flex-shrink, flex-basis */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        #video {
+            max-width: 100%;
+            height: auto;
+            border-radius: 4px;
+        }
+        .terminal-container {
+            flex: 1 1 300px;
+            display: flex;
+            flex-direction: column;
+        }
+        .terminal {
+            background-color: #111;
+            color: #00ff9d;
+            padding: 1rem;
+            border-radius: 4px;
+            overflow-y: auto;
+            flex-grow: 1;
+            font-size: 0.85rem;
+            white-space: pre-wrap; /* Allows text to wrap */
+        }
+        .terminal-header {
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+            border-bottom: 1px solid #333;
+            padding-bottom: 0.5rem;
+        }
+        .service-entry {
+            margin-bottom: 0.5rem;
+        }
+        .load-bar {
+            display: inline-block;
+            width: 100px;
+            height: 10px;
+            background-color: #444;
+            border-radius: 2px;
+            overflow: hidden;
+            margin-left: 10px;
+        }
+        .load-fill {
+            height: 100%;
+            background-color: #00ff9d;
+            transition: width 0.2s ease-in-out;
+        }
     </style>
 </head>
 <body>
-    <h1>Real-time Video Stream via Service Mesh</h1>
-    <img id="video" src="" width="400" height="300" />
+    <h1>Service Mesh Monitor</h1>
+    <div class="container">
+        <div class="video-container">
+            <img id="video" src="" alt="Real-time video stream">
+        </div>
+        <div class="terminal-container">
+            <div class="terminal-header">root@servicemesh:~# poll --services -i 1s</div>
+            <div id="terminal" class="terminal"></div>
+        </div>
+    </div>
 
     <script>
         const videoElement = document.getElementById('video');
+        const terminalElement = document.getElementById('terminal');
         const ws = new WebSocket(`ws://${window.location.host}/ws/video`);
 
+        // --- WebSocket for Video Stream ---
         ws.onmessage = function(event) {
-            // The server sends a base64 encoded image.
-            // We can set it directly as the src of the img tag.
             videoElement.src = event.data;
         };
+        ws.onopen = () => console.log("WebSocket connection established.");
+        ws.onclose = () => console.log("WebSocket connection closed.");
+        ws.onerror = (event) => console.error("WebSocket error:", event);
 
-        ws.onopen = function(event) {
-            console.log("WebSocket connection established.");
-        };
+        // --- Polling for Service Status ---
+        async function fetchServices() {
+            try {
+                const response = await fetch('/api/services');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                updateTerminal(data);
+            } catch (error) {
+                terminalElement.innerHTML = `<span style="color: #ff4d4d;">Error fetching services: ${error.message}</span>`;
+            }
+        }
 
-        ws.onclose = function(event) {
-            console.log("WebSocket connection closed.");
-        };
+        function updateTerminal(data) {
+            let content = '';
+            if (data.status === 'ok' && data.peers) {
+                for (const [name, info] of Object.entries(data.peers)) {
+                    const loadPercentage = (info.load * 100).toFixed(1);
+                    content += `
+                        <div class="service-entry">
+                            <span>SERVICE: ${name.padEnd(15)}</span>
+                            <span>LOAD: </span>
+                            <div class="load-bar">
+                                <div class="load-fill" style="width: ${loadPercentage}%;"></div>
+                            </div>
+                            <span> ${loadPercentage}%</span>
+                        </div>`;
+                }
+            } else {
+                content = `<span style="color: #ffc107;">No services found or API error.</span>`;
+            }
+            terminalElement.innerHTML = content;
+        }
 
-        ws.onerror = function(event) {
-            console.error("WebSocket error:", event);
-        };
+        // Poll every second
+        setInterval(fetchServices, 1000);
+        // Initial fetch
+        fetchServices();
     </script>
 </body>
 </html>

@@ -4,8 +4,7 @@
 
 # Step 1: Kill any existing services
 echo "--- Stopping any existing dct_refurb services... ---"
-# Use pkill to find and kill the process running the main script.
-pkill -f "dct_refurb/main.py"
+./interrupt_dct_refurb.sh
 # Add a small delay to allow processes to terminate gracefully.
 sleep 2
 

@@ -16,6 +16,22 @@ async def read_root():
     with open("dct_refurb/index.html") as f:
         return HTMLResponse(content=f.read(), status_code=200)
 
+@app.get("/api/services")
+async def get_services():
+    """
+    An API endpoint to get the list of active services from the mapper.
+    """
+    service_list = await asyncio.to_thread(service_client.list_peers)
+    return service_list
+
+@app.get("/hello")
+async def hello():
+    return {"message": "Hello, world!"}
+
+@app.get("/hello")
+async def hello():
+    return {"message": "Hello, world!"}
+
 @app.websocket("/ws/video")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()

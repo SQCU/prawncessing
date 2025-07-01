@@ -22,8 +22,8 @@ def run_web_server():
     # We import uvicorn here to avoid it being a dependency for the workers
     import uvicorn
     # The app is now in api.web_server
-    from dct_refurb.api.web_server import app
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    from dct_refurb.api.web_server import app as web_app
+    uvicorn.run(web_app, host="0.0.0.0", port=8000)
 
 if __name__ == "__main__":
     # --- Service Execution Safeguard ---
