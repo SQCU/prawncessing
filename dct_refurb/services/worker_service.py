@@ -6,6 +6,8 @@ import os
 import threading
 from multiprocessing import Queue
 
+from dct_refurb.core_logic.image_generation import generate_image
+
 class WorkerService:
     def __init__(self, name, mapper_address="tcp://127.0.0.1:5555"):
         self.name = name
@@ -64,23 +66,7 @@ class WorkerService:
 
                 if job_data.get("task") == "request_image":
                     # Handle image requests directly and send back the data
-                    from PIL import Image, ImageDraw, ImageFont
-                    import datetime
-                    import io
-
-                    img = Image.new('RGB', (400, 300), color = 'darkgreen')
-                    d = ImageDraw.Draw(img)
-                    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
-                    try:
-                        font = ImageFont.truetype("arial.ttf", 20)
-                    except IOError:
-                        font = ImageFont.load_default()
-                    d.text((10,10), f"Worker [{self.name}] Stream:\n{now}", fill=(255,255,0), font=font)
-                    img_io = io.BytesIO()
-                    img.save(img_io, 'JPEG', quality=70)
-                    img_io.seek(0)
-                    image_data = img_io.read()
-                    
+                    image_data = generate_image(self.name)
                     self.server_socket.send(image_data)
                     continue
 

@@ -4,7 +4,7 @@ import asyncio
 import base64
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
-from worker_service import WorkerService
+from dct_refurb.services.worker_service import WorkerService
 
 app = FastAPI()
 

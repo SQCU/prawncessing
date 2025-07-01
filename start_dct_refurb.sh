@@ -30,7 +30,7 @@ echo "--- Starting the dct_refurb service in the background... ---"
 > dct_refurb/service.log
 # Run the main script with nohup to detach it from the terminal
 # and redirect all output to the log file.
-nohup python -u dct_refurb/main.py >> dct_refurb/service.log 2>&1 &
+nohup python -u -m dct_refurb.main >> dct_refurb/service.log 2>&1 &
 # Add a small delay to allow the services to initialize.
 sleep 3
 
