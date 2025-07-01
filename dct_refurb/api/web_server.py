@@ -4,7 +4,7 @@ import asyncio
 import base64
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
-from dct_refurb.services.worker_service import WorkerService
+from services.worker_service import WorkerService
 
 app = FastAPI()
 
@@ -13,7 +13,7 @@ service_client = WorkerService(name="WebServerClient")
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
-    with open("dct_refurb/index.html") as f:
+    with open("index.html") as f:
         return HTMLResponse(content=f.read(), status_code=200)
 
 @app.get("/api/services")
@@ -23,10 +23,6 @@ async def get_services():
     """
     service_list = await asyncio.to_thread(service_client.list_peers)
     return service_list
-
-@app.get("/hello")
-async def hello():
-    return {"message": "Hello, world!"}
 
 @app.get("/hello")
 async def hello():

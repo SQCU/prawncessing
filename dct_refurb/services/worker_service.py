@@ -6,7 +6,7 @@ import os
 import threading
 from multiprocessing import Queue
 
-from dct_refurb.core_logic.image_generation import generate_image
+from core_logic.image_generation import generate_image
 
 class WorkerService:
     def __init__(self, name, mapper_address="tcp://127.0.0.1:5588"):
