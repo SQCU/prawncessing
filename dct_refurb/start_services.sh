@@ -1,16 +1,20 @@
 #!/bin/bash
 
+# Get the directory of this script
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+cd "$SCRIPT_DIR" || exit
+
 # This script automates the process of stopping, updating, and restarting the dct_refurb service.
 
 # Step 1: Kill any existing services
 echo "--- Stopping any existing dct_refurb services... ---"
-./interrupt_services.sh
+bash ./interrupt_services.sh
 # Add a small delay to allow processes to terminate gracefully.
 sleep 2
 
 # Step 2: Install/update dependencies
 echo "--- Installing/updating dependencies... ---"
-# Activate the virtual environment
+# Activate the virtual environment, which is in the parent directory
 source ../.venv/bin/activate
 if [ $? -ne 0 ]; then
     echo "ERROR: Failed to activate virtual environment. Aborting."
