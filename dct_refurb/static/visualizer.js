@@ -19,7 +19,8 @@ document.addEventListener('DOMContentLoaded', function() {
             if (services && Object.keys(services).length > 0) {
                 const ul = document.createElement('ul');
                 // Iterate over the values of the services object
-                Object.values(services).forEach(service => {
+                Object.entries(services).forEach(([serviceName, serviceData]) => {
+                    const service = { ...serviceData, name: serviceName };
                     const li = document.createElement('li');
                     li.textContent = `Name: ${service.name}, Type: ${service.service_type}, Input: ${service.input_type || 'N/A'}, Output: ${service.output_type || 'N/A'}`;
                     li.dataset.serviceName = service.name;

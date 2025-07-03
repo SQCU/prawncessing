@@ -45,7 +45,8 @@ This checklist outlines the steps to extend the `dct_refurb` service with a new 
 - [x] **5.1 Debug Missing Services in Visualizer:**
     - Identified that the `visualizer.js` frontend was not correctly parsing the `peers` object from the `/api/services` endpoint.
     - Modified `dct_refurb/static/visualizer.js` to correctly access the `peers` array.
-    - **Verification:** User to open `http://localhost:8000/visualizer` and confirm services are displayed.
+    - Identified and fixed the `Name: undefined` issue by correctly extracting the service name from the object key in `visualizer.js`.
+    - **Verification:** User to open `http://localhost:8000/visualizer` and confirm services are displayed with correct names.
 
 ---
 **Note:** This checklist will be updated as development progresses and new insights are gained.
