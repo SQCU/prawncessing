@@ -78,7 +78,11 @@ if __name__ == "__main__":
     # We'll designate Worker-A as our primary image generator
     worker_configs = [
         {"name": "Worker-A", "service_type": "image_generator", "input_type": "json", "output_type": "image/jpeg"},
-        {"name": "Worker-B", "service_type": "image_generator", "input_type": "json", "output_type": "image/jpeg"}
+        {"name": "Worker-B", "service_type": "image_generator", "input_type": "json", "output_type": "image/jpeg"},
+        {"name": "Downscaler-1", "service_type": "downscaler", "input_type": "image/jpeg", "output_type": "image/jpeg"},
+        {"name": "DCTProcessor-1", "service_type": "dct_processor", "input_type": "image/jpeg", "output_type": "dct_coefficients"},
+        {"name": "TileSelector-1", "service_type": "tile_selector", "input_type": "dct_coefficients", "output_type": "tile_coordinates"},
+        {"name": "DiffSmasher-1", "service_type": "diff_smasher", "input_type": "dct_coefficients", "output_type": "image/jpeg"}
     ]
     worker_procs = []
     for config in worker_configs:
