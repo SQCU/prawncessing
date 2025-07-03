@@ -35,6 +35,9 @@ class ServiceMapper:
             self.registry[service_name] = {
                 "address": payload["address"],
                 "pid": payload["pid"],
+                "service_type": payload.get("service_type"),
+                "input_type": payload.get("input_type"),
+                "output_type": payload.get("output_type"),
                 "load": 0.0, # Initial load is 0
                 "last_seen": time.time()
             }

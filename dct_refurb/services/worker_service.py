@@ -9,11 +9,15 @@ from multiprocessing import Queue
 from core_logic.image_generation import generate_image
 
 class WorkerService:
-    def __init__(self, name, mapper_address="tcp://127.0.0.1:5588"):
+    def __init__(self, name, service_type, input_type=None, output_type=None, mapper_address="tcp://127.0.0.1:5588"):
+        self.service_type = service_type
+        self.input_type = input_type
+        self.output_type = output_type
         self.name = name
         self.pid = os.getpid()
         self.mapper_address = mapper_address
         self.job_queue = Queue(maxsize=10) # Max 10 jobs in queue
+        self.active_tasks = 0 # Counter for active image generation tasks
 
         # ZMQ Context setup
         self.context = zmq.Context.instance()
@@ -33,7 +37,14 @@ class WorkerService:
     def _register_with_mapper(self):
         payload = {
             "command": "REGISTER",
-            "payload": {"name": self.name, "address": self.server_address, "pid": self.pid}
+            "payload": {
+                "name": self.name,
+                "address": self.server_address,
+                "pid": self.pid,
+                "service_type": self.service_type,
+                "input_type": self.input_type,
+                "output_type": self.output_type
+            }
         }
         self.mapper_socket.send_json(payload)
         self.mapper_socket.recv_json() # Wait for ack
@@ -66,8 +77,16 @@ class WorkerService:
 
                 if job_data.get("task") == "request_image":
                     # Handle image requests directly and send back the data
-                    image_data = generate_image(self.name)
-                    self.server_socket.send(image_data)
+                    self.active_tasks += 1
+                    print(f"[{self.name}] Starting image generation. Active tasks: {self.active_tasks}")
+                    try:
+                        image_data = generate_image(self.name)
+                        self.server_socket.send(image_data)
+                    except Exception as e:
+                        print(f"[{self.name}] Error during image generation: {e}")
+                    finally:
+                        self.active_tasks -= 1
+                        print(f"[{self.name}] Finished image generation. Active tasks: {self.active_tasks}")
                     continue
 
                 if self.job_queue.full():

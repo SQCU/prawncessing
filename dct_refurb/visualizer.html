@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>DCT Refurbished Visualizer</title>
+    <script src="/static/visualizer.js"></script>
+    <style>
+        body {
+            font-family: sans-serif;
+            display: flex;
+            height: 100vh;
+            margin: 0;
+        }
+        #service-list {
+            width: 200px;
+            border-right: 1px solid #ccc;
+            padding: 10px;
+            overflow-y: auto;
+        }
+        #workflow-area {
+            flex-grow: 1;
+            border: 1px dashed #ccc;
+            margin: 10px;
+            position: relative;
+            background-color: #f9f9f9;
+        }
+        .draggable-service {
+            padding: 5px;
+            margin-bottom: 5px;
+            background-color: #e0e0e0;
+            border: 1px solid #ccc;
+            cursor: grab;
+        }
+        .workflow-node {
+            position: absolute;
+            padding: 10px;
+            background-color: #d0f0d0;
+            border: 1px solid #a0d0a0;
+            cursor: move;
+            z-index: 10;
+        }
+        .connection-line {
+            position: absolute;
+            border: 1px solid blue;
+            z-index: 5;
+        }
+    </style>
+</head>
+<body>
+    <div id="service-list">
+        <h2>Available Services:</h2>
+        <div id="service-map">Loading services...</div>
+    </div>
+    <div id="workflow-area">
+        <h2>Workflow Editor</h2>
+        <button id="generate-string">Generate Service String</button>
+        <pre id="service-string-output"></pre>
+    </div>
+</body>
+</html>

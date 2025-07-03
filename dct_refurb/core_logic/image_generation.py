@@ -3,6 +3,7 @@
 from PIL import Image, ImageDraw, ImageFont
 import datetime
 import io
+import time
 
 def generate_image(worker_name):
     """

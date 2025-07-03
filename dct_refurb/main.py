@@ -6,10 +6,23 @@ import os
 import sys
 from services.service_mapper import ServiceMapper
 from services.worker_service import WorkerService
+from services.downscale_service import DownscaleService
+from services.dct_processor_service import DCTProcessorService
+from services.tile_selection_service import TileSelectionService
+from services.diff_smash_service import DiffSmashService
 
-def run_worker(name):
+def run_worker(name, service_type, input_type=None, output_type=None):
     """Target function for worker processes."""
-    worker = WorkerService(name)
+    if service_type == "downscaler":
+        worker = DownscaleService(name, input_type, output_type)
+    elif service_type == "dct_processor":
+        worker = DCTProcessorService(name, input_type, output_type)
+    elif service_type == "tile_selector":
+        worker = TileSelectionService(name, input_type, output_type)
+    elif service_type == "diff_smasher":
+        worker = DiffSmashService(name, input_type, output_type)
+    else:
+        worker = WorkerService(name, service_type, input_type, output_type)
     worker.run()
 
 def run_mapper():
@@ -62,8 +75,14 @@ if __name__ == "__main__":
     # We'll designate Worker-A as our primary image generator
     worker_names = ["Worker-A", "Worker-B"]
     worker_procs = []
-    for name in worker_names:
-        proc = Process(target=run_worker, args=(name,), daemon=True)
+    # We'll designate Worker-A as our primary image generator
+    worker_configs = [
+        {"name": "Worker-A", "service_type": "image_generator", "input_type": "json", "output_type": "image/jpeg"},
+        {"name": "Worker-B", "service_type": "image_generator", "input_type": "json", "output_type": "image/jpeg"}
+    ]
+    worker_procs = []
+    for config in worker_configs:
+        proc = Process(target=run_worker, args=(config["name"], config["service_type"], config["input_type"], config["output_type"]), daemon=True)
         worker_procs.append(proc)
         proc.start()
     
