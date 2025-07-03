@@ -13,11 +13,13 @@ document.addEventListener('DOMContentLoaded', function() {
     // Fetch services and make them draggable
     fetch('/api/services')
         .then(response => response.json())
-        .then(services => {
+        .then(response => {
+            const services = response.peers;
             serviceMapDiv.innerHTML = '<h2>Available Services:</h2>';
-            if (services.length > 0) {
+            if (services && Object.keys(services).length > 0) {
                 const ul = document.createElement('ul');
-                services.forEach(service => {
+                // Iterate over the values of the services object
+                Object.values(services).forEach(service => {
                     const li = document.createElement('li');
                     li.textContent = `Name: ${service.name}, Type: ${service.service_type}, Input: ${service.input_type || 'N/A'}, Output: ${service.output_type || 'N/A'}`;
                     li.dataset.serviceName = service.name;

@@ -40,5 +40,12 @@ This checklist outlines the steps to extend the `dct_refurb` service with a new 
 - [ ] **4.3 Test end-to-end workflow:**
     - Ready for manual testing. User to wire services in visualizer, generate service string, and execute via curl.
 
+## Phase 5: Debugging and Refinements
+
+- [x] **5.1 Debug Missing Services in Visualizer:**
+    - Identified that the `visualizer.js` frontend was not correctly parsing the `peers` object from the `/api/services` endpoint.
+    - Modified `dct_refurb/static/visualizer.js` to correctly access the `peers` array.
+    - **Verification:** User to open `http://localhost:8000/visualizer` and confirm services are displayed.
+
 ---
 **Note:** This checklist will be updated as development progresses and new insights are gained.
